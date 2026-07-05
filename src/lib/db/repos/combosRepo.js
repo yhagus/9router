@@ -2,6 +2,18 @@ import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 
+function normalizeAccountFilters(filters) {
+  if (!filters || typeof filters !== "object" || Array.isArray(filters)) return {};
+  return Object.fromEntries(
+    Object.entries(filters).map(([model, ids]) => [
+      model,
+      Array.isArray(ids)
+        ? Array.from(new Set(ids.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim())))
+        : [],
+    ])
+  );
+}
+
 function rowToCombo(row) {
   if (!row) return null;
   return {
@@ -9,6 +21,7 @@ function rowToCombo(row) {
     name: row.name,
     kind: row.kind,
     models: parseJson(row.models, []),
+    accountFilters: normalizeAccountFilters(parseJson(row.accountFilters, {})),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -40,12 +53,13 @@ export async function createCombo(data) {
     name: data.name,
     kind: data.kind || null,
     models: data.models || [],
+    accountFilters: normalizeAccountFilters(data.accountFilters),
     createdAt: now,
     updatedAt: now,
   };
   db.run(
-    `INSERT INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
-    [combo.id, combo.name, combo.kind, stringifyJson(combo.models), combo.createdAt, combo.updatedAt]
+    `INSERT INTO combos(id, name, kind, models, accountFilters, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+    [combo.id, combo.name, combo.kind, stringifyJson(combo.models), stringifyJson(combo.accountFilters), combo.createdAt, combo.updatedAt]
   );
   return combo;
 }
@@ -57,9 +71,10 @@ export async function updateCombo(id, data) {
     const row = db.get(`SELECT * FROM combos WHERE id = ?`, [id]);
     if (!row) return;
     const merged = { ...rowToCombo(row), ...data, updatedAt: new Date().toISOString() };
+    merged.accountFilters = normalizeAccountFilters(merged.accountFilters);
     db.run(
-      `UPDATE combos SET name = ?, kind = ?, models = ?, updatedAt = ? WHERE id = ?`,
-      [merged.name, merged.kind, stringifyJson(merged.models || []), merged.updatedAt, id]
+      `UPDATE combos SET name = ?, kind = ?, models = ?, accountFilters = ?, updatedAt = ? WHERE id = ?`,
+      [merged.name, merged.kind, stringifyJson(merged.models || []), stringifyJson(merged.accountFilters), merged.updatedAt, id]
     );
     result = merged;
   });

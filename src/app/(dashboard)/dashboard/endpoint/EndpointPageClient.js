@@ -24,6 +24,8 @@ export default function APIPageClient({ machineId }) {
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
+  const [combos, setCombos] = useState([]);
+  const [editingComboAccess, setEditingComboAccess] = useState(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -255,10 +257,17 @@ export default function APIPageClient({ machineId }) {
 
   const fetchData = async () => {
     try {
-      const keysRes = await fetch("/api/keys");
+      const [keysRes, combosRes] = await Promise.all([
+        fetch("/api/keys"),
+        fetch("/api/combos"),
+      ]);
       const keysData = await keysRes.json();
       if (keysRes.ok) {
         setKeys(keysData.keys || []);
+      }
+      if (combosRes.ok) {
+        const combosData = await combosRes.json();
+        setCombos(combosData.combos || []);
       }
     } catch (error) {
       console.log("Error fetching data:", error);
@@ -667,6 +676,36 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const handleSaveComboAccess = async () => {
+    if (!editingComboAccess) return;
+    const comboAccessMode = editingComboAccess.comboAccessMode === "whitelist" ? "whitelist" : "blacklist";
+    const comboAccessList = Array.isArray(editingComboAccess.comboAccessList) ? editingComboAccess.comboAccessList : [];
+    try {
+      const res = await fetch(`/api/keys/${editingComboAccess.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comboAccessMode, comboAccessList }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setKeys(prev => prev.map(k => k.id === editingComboAccess.id ? data.key : k));
+        setEditingComboAccess(null);
+      }
+    } catch (error) {
+      console.log("Error saving combo access:", error);
+    }
+  };
+
+  const toggleComboAccessItem = (comboName) => {
+    setEditingComboAccess(prev => {
+      if (!prev) return prev;
+      const list = new Set(prev.comboAccessList || []);
+      if (list.has(comboName)) list.delete(comboName);
+      else list.add(comboName);
+      return { ...prev, comboAccessList: Array.from(list) };
+    });
+  };
+
   const maskKey = (fullKey) => {
     if (!fullKey || fullKey.length <= 10) return fullKey || "";
     return fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4);
@@ -1024,6 +1063,10 @@ export default function APIPageClient({ machineId }) {
                   <p className="text-xs text-text-muted mt-1">
                     Created {new Date(key.createdAt).toLocaleDateString()}
                   </p>
+                  <p className="text-xs text-text-muted mt-1">
+                    Combo access: {(key.comboAccessMode || "blacklist") === "whitelist" ? "Whitelist" : "Blacklist"}
+                    {Array.isArray(key.comboAccessList) && key.comboAccessList.length > 0 ? ` (${key.comboAccessList.length})` : " (empty)"}
+                  </p>
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
@@ -1048,6 +1091,17 @@ export default function APIPageClient({ machineId }) {
                     }}
                     title={key.isActive ? "Pause key" : "Resume key"}
                   />
+                  <button
+                    onClick={() => setEditingComboAccess({
+                      ...key,
+                      comboAccessMode: key.comboAccessMode || "blacklist",
+                      comboAccessList: Array.isArray(key.comboAccessList) ? key.comboAccessList : [],
+                    })}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                    title="Edit combo access"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">rule</span>
+                  </button>
                   <button
                     onClick={() => handleDeleteKey(key.id)}
                     className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
@@ -1089,6 +1143,70 @@ export default function APIPageClient({ machineId }) {
               variant="ghost"
               fullWidth
             >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Combo Access Modal */}
+      <Modal
+        isOpen={!!editingComboAccess}
+        title="Combo Access"
+        onClose={() => setEditingComboAccess(null)}
+      >
+        <div className="flex flex-col gap-4">
+          <div>
+            <p className="text-sm font-medium mb-1">{editingComboAccess?.name}</p>
+            <p className="text-xs text-text-muted">Rules apply only when the request model is a combo name. Direct model requests are unaffected.</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setEditingComboAccess(prev => ({ ...prev, comboAccessMode: "blacklist" }))}
+              className={`text-left rounded-lg border p-3 transition-colors ${editingComboAccess?.comboAccessMode !== "whitelist" ? "border-primary bg-primary/10" : "border-border bg-surface"}`}
+            >
+              <p className="text-sm font-medium">Blacklist</p>
+              <p className="text-xs text-text-muted mt-1">Listed combos are blocked. Empty means allow all combos.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditingComboAccess(prev => ({ ...prev, comboAccessMode: "whitelist" }))}
+              className={`text-left rounded-lg border p-3 transition-colors ${editingComboAccess?.comboAccessMode === "whitelist" ? "border-primary bg-primary/10" : "border-border bg-surface"}`}
+            >
+              <p className="text-sm font-medium">Whitelist</p>
+              <p className="text-xs text-text-muted mt-1">Only listed combos are allowed. Empty means block all combos.</p>
+            </button>
+          </div>
+
+          <div className="border border-border rounded-lg max-h-64 overflow-y-auto">
+            {combos.length === 0 ? (
+              <p className="text-sm text-text-muted p-4">No combos configured yet.</p>
+            ) : combos.map((combo) => {
+              const checked = editingComboAccess?.comboAccessList?.includes(combo.name);
+              return (
+                <label key={combo.id || combo.name} className="flex items-center justify-between gap-3 p-3 border-b border-border last:border-b-0 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{combo.name}</p>
+                    <p className="text-xs text-text-muted truncate">{(combo.models || []).join(", ") || "No models"}</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={!!checked}
+                    onChange={() => toggleComboAccessItem(combo.name)}
+                    className="shrink-0"
+                  />
+                </label>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-2">
+            <Button onClick={handleSaveComboAccess} fullWidth>
+              Save
+            </Button>
+            <Button onClick={() => setEditingComboAccess(null)} variant="ghost" fullWidth>
               Cancel
             </Button>
           </div>

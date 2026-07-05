@@ -5,10 +5,9 @@ import {
   markAccountUnavailable,
   clearAccountError,
   extractApiKey,
-  isValidApiKey,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
-import { getSettings } from "@/lib/localDb";
+import { getApiKeyByKey, getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -68,16 +67,19 @@ export async function handleChat(request, clientRawRequest = null) {
 
   // Enforce API key if enabled in settings
   const settings = await getSettings();
+  let apiKeyRecord = null;
   if (settings.requireApiKey) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     }
-    const valid = await isValidApiKey(apiKey);
-    if (!valid) {
+    apiKeyRecord = await getApiKeyByKey(apiKey);
+    if (!apiKeyRecord?.isActive) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }
+  } else if (apiKey) {
+    apiKeyRecord = await getApiKeyByKey(apiKey);
   }
 
   if (!modelStr) {
@@ -93,6 +95,13 @@ export async function handleChat(request, clientRawRequest = null) {
   // Check if model is a combo (has multiple models with fallback)
   const comboModels = await getComboModels(modelStr);
   if (comboModels) {
+    if (apiKeyRecord && !canUseCombo(apiKeyRecord, modelStr)) {
+      log.warn("AUTH", `Combo blocked for API key: ${modelStr}`);
+      return errorResponse(HTTP_STATUS.FORBIDDEN, `Combo not allowed for this API key: ${modelStr}`);
+    }
+
+    const combo = await getComboByName(modelStr);
+
     // Check for combo-specific strategy first, fallback to global
     const comboStrategies = settings.comboStrategies || {};
     const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
@@ -109,7 +118,7 @@ export async function handleChat(request, clientRawRequest = null) {
             const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
             cleanRawReq = { ...clientRawRequest, body: cleanBody };
           }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, getComboAccountFilter(combo?.accountFilters, m));
         },
         log,
         comboName: modelStr,
@@ -123,7 +132,7 @@ export async function handleChat(request, clientRawRequest = null) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, getComboAccountFilter(combo?.accountFilters, m)),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -135,10 +144,26 @@ export async function handleChat(request, clientRawRequest = null) {
   return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey);
 }
 
+function canUseCombo(apiKeyRecord, comboName) {
+  const mode = apiKeyRecord.comboAccessMode === "whitelist" ? "whitelist" : "blacklist";
+  const list = Array.isArray(apiKeyRecord.comboAccessList) ? apiKeyRecord.comboAccessList : [];
+  const listed = list.includes(comboName);
+  return mode === "whitelist" ? listed : !listed;
+}
+
+function getComboAccountFilter(accountFilters, modelStr) {
+  if (!accountFilters || !Object.prototype.hasOwnProperty.call(accountFilters, modelStr)) return null;
+  return Array.isArray(accountFilters[modelStr]) ? accountFilters[modelStr] : [];
+}
+
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, allowedConnectionIds = null) {
+  if (Array.isArray(allowedConnectionIds) && allowedConnectionIds.length === 0) {
+    return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `No accounts allowed for combo model: ${modelStr}`);
+  }
+
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
@@ -146,6 +171,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const comboModels = await getComboModels(modelStr);
     if (comboModels) {
       const chatSettings = await getSettings();
+      const combo = await getComboByName(modelStr);
       // Check for combo-specific strategy first, fallback to global
       const comboStrategies = chatSettings.comboStrategies || {};
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
@@ -162,7 +188,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, getComboAccountFilter(combo.accountFilters, m));
           },
           log,
           comboName: modelStr,
@@ -176,7 +202,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return handleComboChat({
         body,
         models: comboModels,
-        handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+        handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, getComboAccountFilter(combo.accountFilters, m)),
         log,
         comboName: modelStr,
         comboStrategy,
@@ -205,7 +231,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { allowedConnectionIds });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {

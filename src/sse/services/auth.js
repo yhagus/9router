@@ -21,6 +21,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     ? excludeConnectionIds
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
+  const allowedConnectionIds = Array.isArray(options?.allowedConnectionIds)
+    ? new Set(options.allowedConnectionIds)
+    : null;
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionMutex;
   let resolveMutex;
@@ -62,6 +65,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     // Filter out model-locked and excluded connections
     const availableConnections = connections.filter(c => {
+      if (allowedConnectionIds && !allowedConnectionIds.has(c.id)) return false;
       if (excludeSet.has(c.id)) return false;
       if (isModelLockActive(c, model)) return false;
       return true;

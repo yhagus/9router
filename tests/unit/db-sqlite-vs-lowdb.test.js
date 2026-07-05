@@ -53,12 +53,20 @@ describe("DB SQLite layer — public API parity", () => {
     expect(k.key).toMatch(/^sk-/);
     expect(k.machineId).toBe("machine-abc");
     expect(k.isActive).toBe(true);
+    expect(k.comboAccessMode).toBe("blacklist");
+    expect(k.comboAccessList).toEqual([]);
 
     const all = await sqliteDb.getApiKeys();
     expect(all.find((x) => x.id === k.id)).toBeDefined();
 
     expect(await sqliteDb.validateApiKey(k.key)).toBeTruthy();
+    expect(await sqliteDb.getApiKeyByKey(k.key)).toMatchObject({ id: k.id, comboAccessMode: "blacklist", comboAccessList: [] });
     expect(await sqliteDb.validateApiKey("invalid")).toBeFalsy();
+
+    const updated = await sqliteDb.updateApiKey(k.id, { comboAccessMode: "whitelist", comboAccessList: ["coding", "coding", " "] });
+    expect(updated.comboAccessMode).toBe("whitelist");
+    expect(updated.comboAccessList).toEqual(["coding"]);
+    expect(await sqliteDb.getApiKeyById(k.id)).toMatchObject({ comboAccessMode: "whitelist", comboAccessList: ["coding"] });
 
     const deleted = await sqliteDb.deleteApiKey(k.id);
     expect(deleted).toBe(true);
@@ -128,14 +136,16 @@ describe("DB SQLite layer — public API parity", () => {
   });
 
   it("combos: CRUD", async () => {
-    const c = await sqliteDb.createCombo({ name: "combo1", models: ["m1", "m2"], kind: "fallback" });
+    const c = await sqliteDb.createCombo({ name: "combo1", models: ["m1", "m2"], kind: "fallback", accountFilters: { m1: ["acc1", "acc1", " "], m2: [] } });
     expect(c.id).toBeDefined();
     expect(c.models).toEqual(["m1", "m2"]);
+    expect(c.accountFilters).toEqual({ m1: ["acc1"], m2: [] });
     const byName = await sqliteDb.getComboByName("combo1");
     expect(byName.id).toBe(c.id);
-    await sqliteDb.updateCombo(c.id, { models: ["m3"] });
+    await sqliteDb.updateCombo(c.id, { models: ["m3"], accountFilters: { m3: ["acc3"] } });
     const updated = await sqliteDb.getComboById(c.id);
     expect(updated.models).toEqual(["m3"]);
+    expect(updated.accountFilters).toEqual({ m3: ["acc3"] });
     expect(await sqliteDb.deleteCombo(c.id)).toBe(true);
   });
 

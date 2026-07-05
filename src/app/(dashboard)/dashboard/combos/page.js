@@ -5,6 +5,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
+import { useRouter } from "next/navigation";
 import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
@@ -21,6 +22,7 @@ export default function CombosPage() {
   const [comboStrategies, setComboStrategies] = useState({});
   const [modelCaps, setModelCaps] = useState({});
   const [confirmState, setConfirmState] = useState(null);
+  const router = useRouter();
   const { copied, copy } = useCopyToClipboard();
 
   useEffect(() => {
@@ -194,6 +196,7 @@ export default function CombosPage() {
               copied={copied}
               onCopy={copy}
               onEdit={() => setEditingCombo(combo)}
+              onManageAccounts={() => router.push(`/dashboard/combos/${combo.id}/accounts`)}
               onDelete={() => handleDelete(combo.id)}
               strategy={comboStrategies[combo.name] || {}}
               onSetStrategy={(patch) => handleSetComboStrategy(combo.name, patch)}
@@ -240,7 +243,7 @@ const STRATEGY_OPTIONS = [
   { value: "fusion", label: "Fusion — panel + judge" },
 ];
 
-function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
+function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onManageAccounts, onDelete, strategy = {}, onSetStrategy }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const current = strategy.fallbackStrategy || "fallback";
   const judge = strategy.judgeModel || "";
@@ -308,7 +311,7 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-1 sm:flex">
+          <div className="grid grid-cols-4 gap-1 sm:flex">
             <button
               onClick={(e) => { e.stopPropagation(); onCopy(combo.name, `combo-${combo.id}`); }}
               className="flex flex-col items-center rounded px-2 py-1 text-text-muted transition-colors hover:bg-black/5 hover:text-primary dark:hover:bg-white/5"
@@ -326,6 +329,14 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
             >
               <span className="material-symbols-outlined text-[18px]">edit</span>
               <span className="text-[10px] leading-tight">Edit</span>
+            </button>
+            <button
+              onClick={onManageAccounts}
+              className="flex flex-col items-center rounded px-2 py-1 text-text-muted transition-colors hover:bg-black/5 hover:text-primary dark:hover:bg-white/5"
+              title="Manage model accounts"
+            >
+              <span className="material-symbols-outlined text-[18px]">manage_accounts</span>
+              <span className="text-[10px] leading-tight">Accounts</span>
             </button>
             <button
               onClick={onDelete}

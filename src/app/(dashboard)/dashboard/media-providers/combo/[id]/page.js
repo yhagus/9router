@@ -61,6 +61,7 @@ export default function ComboDetailPage() {
   const [apiKey, setApiKey] = useState("");
   const [connections, setConnections] = useState([]);
   const [modelAliases, setModelAliases] = useState({});
+  const [editingAccounts, setEditingAccounts] = useState(null);
 
   const fetchAll = async () => {
     try {
@@ -138,6 +139,40 @@ export default function ComboDetailPage() {
     const next = providers.filter((_, i) => i !== idx);
     setProviders(next);
     await saveCombo({ models: next });
+  };
+
+  const saveAccountFilters = async (nextFilters) => {
+    setCombo((prev) => prev ? { ...prev, accountFilters: nextFilters } : prev);
+    await saveCombo({ accountFilters: nextFilters });
+  };
+
+  const handleSetAllAccounts = async (modelEntry) => {
+    const next = { ...(combo.accountFilters || {}) };
+    delete next[modelEntry];
+    await saveAccountFilters(next);
+  };
+
+  const handleSkipModelAccounts = async (modelEntry) => {
+    await saveAccountFilters({ ...(combo.accountFilters || {}), [modelEntry]: [] });
+  };
+
+  const toggleModelAccount = (connectionId) => {
+    setEditingAccounts((prev) => {
+      if (!prev) return prev;
+      const list = new Set(prev.selected || []);
+      if (list.has(connectionId)) list.delete(connectionId);
+      else list.add(connectionId);
+      return { ...prev, selected: Array.from(list) };
+    });
+  };
+
+  const saveModelAccounts = async () => {
+    if (!editingAccounts) return;
+    await saveAccountFilters({
+      ...(combo.accountFilters || {}),
+      [editingAccounts.modelEntry]: editingAccounts.selected || [],
+    });
+    setEditingAccounts(null);
   };
 
   const handleMove = async (idx, dir) => {
@@ -296,6 +331,14 @@ export default function ComboDetailPage() {
             {providers.map((entry, idx) => {
               const { providerId, model } = parseModelEntry(entry);
               const p = AI_PROVIDERS[providerId];
+              const providerConnections = connections.filter((c) => c.provider === providerId && c.isActive !== false);
+              const hasFilter = Object.prototype.hasOwnProperty.call(combo.accountFilters || {}, entry);
+              const selectedIds = hasFilter ? (combo.accountFilters?.[entry] || []) : null;
+              const accountLabel = !hasFilter
+                ? "All accounts"
+                : selectedIds.length === 0
+                  ? "Skipped"
+                  : `${selectedIds.length} account${selectedIds.length === 1 ? "" : "s"}`;
               return (
                 <div key={`${entry}-${idx}`} className="flex items-center gap-3 p-2 rounded-lg bg-black/[0.02] dark:bg-white/[0.02]">
                   <span className="text-xs text-text-muted w-5 text-center">{idx + 1}</span>
@@ -310,8 +353,32 @@ export default function ComboDetailPage() {
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium truncate">{p?.name || providerId}</div>
                     {model && <code className="text-[10px] text-text-muted font-mono truncate block">{model}</code>}
+                    <div className={`text-[10px] mt-0.5 ${hasFilter && selectedIds.length === 0 ? "text-orange-500" : "text-text-muted"}`}>
+                      Accounts: {accountLabel}
+                    </div>
                   </div>
                   <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={() => setEditingAccounts({ modelEntry: entry, providerId, selected: hasFilter ? selectedIds : providerConnections.map((c) => c.id) })}
+                      className="p-1 rounded text-text-muted hover:text-primary hover:bg-black/5"
+                      title="Manage accounts"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">manage_accounts</span>
+                    </button>
+                    <button
+                      onClick={() => handleSetAllAccounts(entry)}
+                      className="p-1 rounded text-text-muted hover:text-primary hover:bg-black/5"
+                      title="Use all accounts"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">select_all</span>
+                    </button>
+                    <button
+                      onClick={() => handleSkipModelAccounts(entry)}
+                      className="p-1 rounded text-text-muted hover:text-orange-500 hover:bg-orange-500/10"
+                      title="Skip this model"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">block</span>
+                    </button>
                     <button onClick={() => handleMove(idx, -1)} disabled={idx === 0} className={`p-1 rounded ${idx === 0 ? "text-text-muted/20" : "text-text-muted hover:text-primary hover:bg-black/5"}`} title="Move up">
                       <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
                     </button>
@@ -405,6 +472,43 @@ export default function ComboDetailPage() {
         addedModelValues={providers}
         closeOnSelect={false}
       />
+
+      {editingAccounts && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-xl border border-border bg-surface p-5 shadow-xl">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold">Model Accounts</h2>
+              <p className="text-xs text-text-muted mt-1">{editingAccounts.modelEntry}</p>
+            </div>
+
+            <div className="max-h-72 overflow-y-auto rounded-lg border border-border">
+              {connections.filter((c) => c.provider === editingAccounts.providerId && c.isActive !== false).length === 0 ? (
+                <p className="p-4 text-sm text-text-muted">No active accounts for this provider.</p>
+              ) : connections.filter((c) => c.provider === editingAccounts.providerId && c.isActive !== false).map((conn) => (
+                <label key={conn.id} className="flex items-center justify-between gap-3 border-b border-border p-3 last:border-b-0 hover:bg-black/5 dark:hover:bg-white/5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{conn.displayName || conn.name || conn.email || conn.id}</p>
+                    <p className="truncate text-xs text-text-muted">Priority {conn.priority || "-"} · {conn.authType}</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={(editingAccounts.selected || []).includes(conn.id)}
+                    onChange={() => toggleModelAccount(conn.id)}
+                    className="shrink-0"
+                  />
+                </label>
+              ))}
+            </div>
+
+            <p className="mt-3 text-xs text-text-muted">No checked accounts means this model is skipped. Use the all-accounts button on the model row to remove the restriction.</p>
+
+            <div className="mt-4 flex gap-2">
+              <Button onClick={saveModelAccounts} fullWidth>Save</Button>
+              <Button onClick={() => setEditingAccounts(null)} variant="ghost" fullWidth>Cancel</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
