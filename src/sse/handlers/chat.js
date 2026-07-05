@@ -7,7 +7,7 @@ import {
   extractApiKey,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
-import { getApiKeyByKey, getSettings } from "@/lib/localDb";
+import { getApiKeyByKey, getComboByName, getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
