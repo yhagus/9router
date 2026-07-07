@@ -710,6 +710,22 @@ export async function getChartData(period = "7d") {
     return buckets;
   }
 
+  if (period === "all") {
+    const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
+    return loadDaysInRange(db, null)
+      .sort((a, b) => String(a.dateKey).localeCompare(String(b.dateKey)))
+      .map((r) => {
+        const dayData = parseJson(r.data, {});
+        const [year, month, day] = String(r.dateKey).split("-").map(Number);
+        const date = new Date(year, month - 1, day);
+        return {
+          label: labelFn(date),
+          tokens: (dayData.promptTokens || 0) + (dayData.completionTokens || 0),
+          cost: dayData.cost || 0,
+        };
+      });
+  }
+
   const bucketCount = period === "7d" ? 7 : period === "30d" ? 30 : 60;
   const today = new Date();
   const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
