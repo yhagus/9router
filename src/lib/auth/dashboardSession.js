@@ -37,11 +37,19 @@ export async function createDashboardAuthToken(claims = {}) {
     .sign(SECRET);
 }
 
+export async function createClientAuthToken(claims = {}) {
+  return new SignJWT({ authenticated: true, role: "client", ...claims })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("24h")
+    .sign(SECRET);
+}
+
 export async function verifyDashboardAuthToken(token) {
   if (!token) return false;
   try {
-    await jwtVerify(token, SECRET);
-    return true;
+    const { payload } = await jwtVerify(token, SECRET);
+    return payload?.role !== "client";
   } catch {
     return false;
   }
@@ -51,7 +59,17 @@ export async function getDashboardAuthSession(token) {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, SECRET);
-    return payload;
+    return payload?.role === "client" ? null : payload;
+  } catch {
+    return null;
+  }
+}
+
+export async function getClientAuthSession(token) {
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, SECRET);
+    return payload?.role === "client" ? payload : null;
   } catch {
     return null;
   }
@@ -67,8 +85,22 @@ export async function setDashboardAuthCookie(cookieStore, request, claims = {}) 
   });
 }
 
+export async function setClientAuthCookie(cookieStore, request, claims = {}) {
+  const token = await createClientAuthToken(claims);
+  cookieStore.set("client_auth_token", token, {
+    httpOnly: true,
+    secure: shouldUseSecureCookie(request),
+    sameSite: "lax",
+    path: "/",
+  });
+}
+
 export function clearDashboardAuthCookie(cookieStore) {
   cookieStore.delete("auth_token");
+}
+
+export function clearClientAuthCookie(cookieStore) {
+  cookieStore.delete("client_auth_token");
 }
 
 // Verify the current dashboard password (re-auth for sensitive actions).

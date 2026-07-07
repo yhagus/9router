@@ -334,6 +334,69 @@ export async function getUsageHistory(filter = {}) {
   }));
 }
 
+export async function getUsageStatsForApiKey(apiKey) {
+  const db = await getAdapter();
+  const rows = db.all(
+    `SELECT timestamp, provider, model, promptTokens, completionTokens, status, tokens
+     FROM usageHistory
+     WHERE apiKey = ?
+     ORDER BY id DESC`,
+    [apiKey]
+  );
+
+  const stats = {
+    totalRequests: rows.length,
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    totalCachedTokens: 0,
+    byModel: {},
+    recentRequests: [],
+  };
+
+  for (const r of rows) {
+    const tokens = parseJson(r.tokens, {}) || {};
+    const promptTokens = tokens.prompt_tokens || tokens.input_tokens || r.promptTokens || 0;
+    const completionTokens = tokens.completion_tokens || tokens.output_tokens || r.completionTokens || 0;
+    const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
+    const modelKey = r.provider ? `${r.model} (${r.provider})` : r.model;
+
+    stats.totalPromptTokens += promptTokens;
+    stats.totalCompletionTokens += completionTokens;
+    stats.totalCachedTokens += cachedTokens;
+
+    if (!stats.byModel[modelKey]) {
+      stats.byModel[modelKey] = {
+        rawModel: r.model,
+        provider: r.provider || "",
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        lastUsed: r.timestamp,
+      };
+    }
+    const modelStats = stats.byModel[modelKey];
+    modelStats.requests++;
+    modelStats.promptTokens += promptTokens;
+    modelStats.completionTokens += completionTokens;
+    modelStats.cachedTokens += cachedTokens;
+    if (new Date(r.timestamp) > new Date(modelStats.lastUsed)) modelStats.lastUsed = r.timestamp;
+
+    stats.recentRequests.push({
+      timestamp: r.timestamp,
+      model: r.model,
+      provider: r.provider || "",
+      promptTokens,
+      completionTokens,
+      cachedTokens,
+      status: r.status || "ok",
+    });
+  }
+
+  stats.byModel = Object.values(stats.byModel).sort((a, b) => b.requests - a.requests);
+  return stats;
+}
+
 function loadDaysInRange(adapter, maxDays) {
   if (maxDays == null) {
     return adapter.all(`SELECT dateKey, data FROM usageDaily`);

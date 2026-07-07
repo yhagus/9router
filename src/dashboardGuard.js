@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getSettings, validateApiKey } from "@/lib/localDb";
+import { getApiKeyById, getSettings, validateApiKey } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+import { getClientAuthSession, verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 
 const CLI_TOKEN_HEADER = "x-9r-cli-token";
 const CLI_TOKEN_SALT = "9r-cli-auth";
@@ -29,6 +29,7 @@ const PUBLIC_API_PATHS = [
   "/api/auth/oidc",
   "/api/version",
   "/api/settings/require-login",
+  "/api/client/auth/login",
 ];
 
 // Public top-level prefixes (LLM API endpoints with their own API key auth).
@@ -166,6 +167,15 @@ async function isAuthenticated(request) {
   return false;
 }
 
+async function getValidClientSession(request) {
+  const token = request.cookies.get("client_auth_token")?.value;
+  const session = await getClientAuthSession(token);
+  if (!session?.apiKeyId) return null;
+  const key = await getApiKeyById(session.apiKeyId);
+  if (!key?.isActive) return null;
+  return { session, key };
+}
+
 function isPublicApi(pathname) {
   if (isPublicLlmApi(pathname)) return true;
   return PUBLIC_API_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
@@ -204,9 +214,19 @@ export async function proxy(request) {
   // Deny-by-default for /api/* — public allow-list bypasses, everything else requires auth.
   if (pathname.startsWith("/api/")) {
     if (isPublicApi(pathname)) return NextResponse.next();
+    if (pathname.startsWith("/api/client/")) {
+      if (await getValidClientSession(request)) return NextResponse.next();
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     if (await hasValidCliToken(request) || await isAuthenticated(request))
       return NextResponse.next();
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Client dashboard uses API-key guest auth only. Admin auth_token is ignored here.
+  if (pathname.startsWith("/client")) {
+    if (await getValidClientSession(request)) return NextResponse.next();
+    return NextResponse.redirect(new URL("/login/guest", request.url));
   }
 
   // Protect all dashboard routes
