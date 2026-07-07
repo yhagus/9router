@@ -3,10 +3,9 @@ import {
   markAccountUnavailable,
   clearAccountError,
   extractApiKey,
-  isValidApiKey,
 } from "../services/auth.js";
-import { getSettings } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
+import { blockModelIfNeeded, getApiKeyRecordForRequest } from "../services/accessGate.js";
 import { handleEmbeddingsCore } from "open-sse/handlers/embeddingsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -42,18 +41,8 @@ export async function handleEmbeddings(request) {
   }
 
   // Enforce API key if enabled in settings
-  const settings = await getSettings();
-  if (settings.requireApiKey) {
-    if (!apiKey) {
-      log.warn("AUTH", "Missing API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
-    }
-    const valid = await isValidApiKey(apiKey);
-    if (!valid) {
-      log.warn("AUTH", "Invalid API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
-    }
-  }
+  const { apiKeyRecord, error } = await getApiKeyRecordForRequest(request, log);
+  if (error) return error;
 
   if (!modelStr) {
     log.warn("EMBEDDINGS", "Missing model");
@@ -72,6 +61,8 @@ export async function handleEmbeddings(request) {
   }
 
   const { provider, model } = modelInfo;
+  const blocked = blockModelIfNeeded(apiKeyRecord, `${provider}/${model}`);
+  if (blocked) return blocked;
 
   if (modelStr !== `${provider}/${model}`) {
     log.info("ROUTING", `${modelStr} → ${provider}/${model}`);

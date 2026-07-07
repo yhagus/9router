@@ -476,16 +476,20 @@ export async function OPTIONS() {
  * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
  */
 export async function GET() {
-  try {
-    const data = await buildModelsList([LLM_KIND]);
-    return Response.json({ object: "list", data }, {
-      headers: { "Access-Control-Allow-Origin": "*" },
-    });
-  } catch (error) {
-    console.log("Error fetching models:", error);
-    return Response.json(
-      { error: { message: error.message, type: "server_error" } },
-      { status: 500 }
-    );
-  }
+  return Response.json(
+    { error: { message: "Model listing is disabled", type: "forbidden" } },
+    { status: 403, headers: { "Access-Control-Allow-Origin": "*" } }
+  );
+  // try {
+  //   const data = await buildModelsList([LLM_KIND]);
+  //   return Response.json({ object: "list", data }, {
+  //     headers: { "Access-Control-Allow-Origin": "*" },
+  //   });
+  // } catch (error) {
+  //   console.log("Error fetching models:", error);
+  //   return Response.json(
+  //     { error: { message: error.message, type: "server_error" } },
+  //     { status: 500 }
+  //   );
+  // }
 }

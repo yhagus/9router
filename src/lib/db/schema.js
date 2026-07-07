@@ -80,6 +80,8 @@ export const TABLES = {
       isActive: "INTEGER DEFAULT 1",
       comboAccessMode: "TEXT DEFAULT 'blacklist'",
       comboAccessList: "TEXT DEFAULT '[]'",
+      modelAccessMode: "TEXT DEFAULT 'whitelist'",
+      modelAccessList: "TEXT DEFAULT '[]'",
       createdAt: "TEXT NOT NULL",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],

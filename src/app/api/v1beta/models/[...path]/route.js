@@ -2,10 +2,10 @@ import { handleChat } from "@/sse/handlers/chat.js";
 import {
   clearAccountError,
   getProviderCredentials,
-  isValidApiKey,
   markAccountUnavailable,
 } from "@/sse/services/auth.js";
-import { getSettings } from "@/lib/localDb";
+import { getApiKeyByKey, getSettings } from "@/lib/localDb";
+import { canUseModel } from "@/sse/services/accessGate.js";
 import { PROVIDER_MODELS } from "@/shared/constants/models";
 import { GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS } from "open-sse/config/runtimeConfig.js";
 import { initTranslators } from "open-sse/translator/index.js";
@@ -179,19 +179,22 @@ function buildGeminiNativeUrl(requestUrl, model, action) {
 
 async function validateGeminiNativeClientKey(request) {
   const settings = await getSettings();
-  if (!settings.requireApiKey) return null;
-
   const apiKey = extractGeminiClientApiKey(request);
+
+  if (!settings.requireApiKey) {
+    return { apiKeyRecord: apiKey ? await getApiKeyByKey(apiKey) : null };
+  }
+
   if (!apiKey) {
     return Response.json({ error: { message: "Missing API key" } }, { status: 401 });
   }
 
-  const valid = await isValidApiKey(apiKey);
-  if (!valid) {
+  const apiKeyRecord = await getApiKeyByKey(apiKey);
+  if (!apiKeyRecord?.isActive) {
     return Response.json({ error: { message: "Invalid API key" } }, { status: 401 });
   }
 
-  return null;
+  return { apiKeyRecord };
 }
 
 function buildGeminiNativeAuthHeaders(credentials) {
@@ -236,12 +239,19 @@ function getSafeGeminiNativeErrorText(error) {
 }
 
 async function forwardGeminiNativeRequest(request, body, model, action) {
-  const authError = await validateGeminiNativeClientKey(request);
-  if (authError) return authError;
+  const auth = await validateGeminiNativeClientKey(request);
+  if (auth instanceof Response) return auth;
 
   const modelId = normalizeGeminiNativeModel(model);
   if (!GEMINI_NATIVE_MODEL_PATTERN.test(modelId)) {
     return Response.json({ error: { message: "Invalid model" } }, { status: 400 });
+  }
+  const canonicalModelId = `gemini/${modelId}`;
+  if (auth?.apiKeyRecord && !canUseModel(auth.apiKeyRecord, canonicalModelId)) {
+    return Response.json(
+      { error: { message: `Model not allowed for this API key: ${canonicalModelId}` } },
+      { status: 403 }
+    );
   }
   const excludeConnectionIds = new Set();
   const bodyText = JSON.stringify(body);

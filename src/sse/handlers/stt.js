@@ -1,9 +1,8 @@
 import {
-  extractApiKey, isValidApiKey,
   getProviderCredentials, markAccountUnavailable,
 } from "../services/auth.js";
-import { getSettings } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
+import { blockModelIfNeeded, getApiKeyRecordForRequest } from "../services/accessGate.js";
 import { handleSttCore } from "open-sse/handlers/sttCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -28,13 +27,8 @@ export async function handleStt(request) {
   const modelStr = formData.get("model");
   log.request("POST", `/v1/audio/transcriptions | ${modelStr}`);
 
-  const settings = await getSettings();
-  if (settings.requireApiKey) {
-    const apiKey = extractApiKey(request);
-    if (!apiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
-    const valid = await isValidApiKey(apiKey);
-    if (!valid) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
-  }
+  const { apiKeyRecord, error } = await getApiKeyRecordForRequest(request, log);
+  if (error) return error;
 
   if (!modelStr) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   if (!formData.get("file")) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: file");
@@ -43,6 +37,8 @@ export async function handleStt(request) {
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
   const { provider, model } = modelInfo;
+  const blocked = blockModelIfNeeded(apiKeyRecord, `${provider}/${model}`);
+  if (blocked) return blocked;
   log.info("ROUTING", `Provider: ${provider}, Model: ${model}`);
 
   // noAuth providers

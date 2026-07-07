@@ -7,8 +7,9 @@ import {
   extractApiKey,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
-import { getApiKeyByKey, getComboByName, getSettings } from "@/lib/localDb";
+import { getComboByName, getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
+import { blockModelIfNeeded, canUseCombo, getApiKeyRecordForRequest } from "../services/accessGate.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -66,21 +67,8 @@ export async function handleChat(request, clientRawRequest = null) {
   }
 
   // Enforce API key if enabled in settings
-  const settings = await getSettings();
-  let apiKeyRecord = null;
-  if (settings.requireApiKey) {
-    if (!apiKey) {
-      log.warn("AUTH", "Missing API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
-    }
-    apiKeyRecord = await getApiKeyByKey(apiKey);
-    if (!apiKeyRecord?.isActive) {
-      log.warn("AUTH", "Invalid API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
-    }
-  } else if (apiKey) {
-    apiKeyRecord = await getApiKeyByKey(apiKey);
-  }
+  const { settings, apiKeyRecord, error } = await getApiKeyRecordForRequest(request, log);
+  if (error) return error;
 
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
@@ -118,7 +106,7 @@ export async function handleChat(request, clientRawRequest = null) {
             const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
             cleanRawReq = { ...clientRawRequest, body: cleanBody };
           }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, getComboAccountFilter(combo?.accountFilters, m));
+          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, getComboAccountFilter(combo?.accountFilters, m), { skipModelGate: true });
         },
         log,
         comboName: modelStr,
@@ -132,7 +120,7 @@ export async function handleChat(request, clientRawRequest = null) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, getComboAccountFilter(combo?.accountFilters, m)),
+      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, getComboAccountFilter(combo?.accountFilters, m), { skipModelGate: true }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -141,14 +129,7 @@ export async function handleChat(request, clientRawRequest = null) {
   }
 
   // Single model request
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey);
-}
-
-function canUseCombo(apiKeyRecord, comboName) {
-  const mode = apiKeyRecord.comboAccessMode === "whitelist" ? "whitelist" : "blacklist";
-  const list = Array.isArray(apiKeyRecord.comboAccessList) ? apiKeyRecord.comboAccessList : [];
-  const listed = list.includes(comboName);
-  return mode === "whitelist" ? listed : !listed;
+  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, null, { apiKeyRecord });
 }
 
 function getComboAccountFilter(accountFilters, modelStr) {
@@ -159,7 +140,7 @@ function getComboAccountFilter(accountFilters, modelStr) {
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, allowedConnectionIds = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, allowedConnectionIds = null, options = {}) {
   if (Array.isArray(allowedConnectionIds) && allowedConnectionIds.length === 0) {
     return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `No accounts allowed for combo model: ${modelStr}`);
   }
@@ -188,7 +169,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, getComboAccountFilter(combo.accountFilters, m));
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, getComboAccountFilter(combo.accountFilters, m), { skipModelGate: true });
           },
           log,
           comboName: modelStr,
@@ -202,7 +183,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return handleComboChat({
         body,
         models: comboModels,
-        handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, getComboAccountFilter(combo.accountFilters, m)),
+        handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, getComboAccountFilter(combo.accountFilters, m), { skipModelGate: true }),
         log,
         comboName: modelStr,
         comboStrategy,
@@ -214,10 +195,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   }
 
   const { provider, model } = modelInfo;
+  const canonicalModelId = `${provider}/${model}`;
+  if (!options.skipModelGate) {
+    const blocked = blockModelIfNeeded(options.apiKeyRecord, canonicalModelId);
+    if (blocked) return blocked;
+  }
 
   // Log model routing (alias → actual model)
-  if (modelStr !== `${provider}/${model}`) {
-    log.info("ROUTING", `${modelStr} → ${provider}/${model}`);
+  if (modelStr !== canonicalModelId) {
+    log.info("ROUTING", `${modelStr} → ${canonicalModelId}`);
   } else {
     log.info("ROUTING", `Provider: ${provider}, Model: ${model}`);
   }

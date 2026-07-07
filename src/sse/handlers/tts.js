@@ -1,9 +1,8 @@
 import {
-  extractApiKey, isValidApiKey,
   getProviderCredentials, markAccountUnavailable,
 } from "../services/auth.js";
-import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
+import { blockModelIfNeeded, canUseCombo, getApiKeyRecordForRequest } from "../services/accessGate.js";
 import { handleTtsCore } from "open-sse/handlers/ttsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -32,13 +31,8 @@ export async function handleTts(request) {
   const language = body.language || ""; // Optional language hint (currently used by Gemini)
   log.request("POST", `${url.pathname} | ${modelStr} | format=${responseFormat}${language ? ` | lang=${language}` : ""}`);
 
-  const settings = await getSettings();
-  if (settings.requireApiKey) {
-    const apiKey = extractApiKey(request);
-    if (!apiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
-    const valid = await isValidApiKey(apiKey);
-    if (!valid) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
-  }
+  const { settings, apiKeyRecord, error } = await getApiKeyRecordForRequest(request, log);
+  if (error) return error;
 
   if (!modelStr) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   if (!body.input) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: input");
@@ -46,6 +40,9 @@ export async function handleTts(request) {
   // Combo expansion: model may be a combo name → run fallback/round-robin across models
   const comboModels = await getComboModels(modelStr);
   if (comboModels) {
+    if (apiKeyRecord && !canUseCombo(apiKeyRecord, modelStr)) {
+      return errorResponse(HTTP_STATUS.FORBIDDEN, `Combo not allowed for this API key: ${modelStr}`);
+    }
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
@@ -53,7 +50,7 @@ export async function handleTts(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelTts(b, m, responseFormat, language),
+      handleSingleModel: (b, m) => handleSingleModelTts(b, m, responseFormat, language, { skipModelGate: true }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -61,14 +58,18 @@ export async function handleTts(request) {
     });
   }
 
-  return handleSingleModelTts(body, modelStr, responseFormat, language);
+  return handleSingleModelTts(body, modelStr, responseFormat, language, { apiKeyRecord });
 }
 
-async function handleSingleModelTts(body, modelStr, responseFormat, language) {
+async function handleSingleModelTts(body, modelStr, responseFormat, language, { apiKeyRecord, skipModelGate } = {}) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
   const { provider, model } = modelInfo;
+  if (!skipModelGate) {
+    const blocked = blockModelIfNeeded(apiKeyRecord, `${provider}/${model}`);
+    if (blocked) return blocked;
+  }
   log.info("ROUTING", `Provider: ${provider}, Voice: ${model}`);
 
   // noAuth providers — no credential needed

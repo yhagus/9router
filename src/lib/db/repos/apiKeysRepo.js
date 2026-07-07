@@ -8,11 +8,17 @@ function normalizeComboAccessMode(mode) {
   return COMBO_ACCESS_MODES.has(mode) ? mode : "blacklist";
 }
 
+function normalizeModelAccessMode(mode) {
+  return COMBO_ACCESS_MODES.has(mode) ? mode : "whitelist";
+}
+
 function normalizeComboAccessList(list) {
   return Array.isArray(list)
     ? Array.from(new Set(list.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())))
     : [];
 }
+
+const normalizeModelAccessList = normalizeComboAccessList;
 
 function rowToKey(row) {
   if (!row) return null;
@@ -24,6 +30,8 @@ function rowToKey(row) {
     isActive: row.isActive === 1 || row.isActive === true,
     comboAccessMode: normalizeComboAccessMode(row.comboAccessMode),
     comboAccessList: normalizeComboAccessList(parseJson(row.comboAccessList, [])),
+    modelAccessMode: normalizeModelAccessMode(row.modelAccessMode),
+    modelAccessList: normalizeModelAccessList(parseJson(row.modelAccessList, [])),
     createdAt: row.createdAt,
   };
 }
@@ -59,11 +67,13 @@ export async function createApiKey(name, machineId) {
     isActive: true,
     comboAccessMode: "blacklist",
     comboAccessList: [],
+    modelAccessMode: "whitelist",
+    modelAccessList: [],
     createdAt: new Date().toISOString(),
   };
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.comboAccessMode, stringifyJson(apiKey.comboAccessList), apiKey.createdAt]
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.comboAccessMode, stringifyJson(apiKey.comboAccessList), apiKey.modelAccessMode, stringifyJson(apiKey.modelAccessList), apiKey.createdAt]
   );
   return apiKey;
 }
@@ -77,9 +87,11 @@ export async function updateApiKey(id, data) {
     const merged = { ...rowToKey(row), ...data };
     merged.comboAccessMode = normalizeComboAccessMode(merged.comboAccessMode);
     merged.comboAccessList = normalizeComboAccessList(merged.comboAccessList);
+    merged.modelAccessMode = normalizeModelAccessMode(merged.modelAccessMode);
+    merged.modelAccessList = normalizeModelAccessList(merged.modelAccessList);
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, comboAccessMode = ?, comboAccessList = ? WHERE id = ?`,
-      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.comboAccessMode, stringifyJson(merged.comboAccessList), id]
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, comboAccessMode = ?, comboAccessList = ?, modelAccessMode = ?, modelAccessList = ? WHERE id = ?`,
+      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.comboAccessMode, stringifyJson(merged.comboAccessList), merged.modelAccessMode, stringifyJson(merged.modelAccessList), id]
     );
     result = merged;
   });

@@ -21,7 +21,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, comboAccessMode, comboAccessList } = body;
+    const { isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -32,6 +32,8 @@ export async function PUT(request, { params }) {
     if (isActive !== undefined) updateData.isActive = isActive;
     if (comboAccessMode !== undefined) updateData.comboAccessMode = comboAccessMode;
     if (comboAccessList !== undefined) updateData.comboAccessList = comboAccessList;
+    if (modelAccessMode !== undefined) updateData.modelAccessMode = modelAccessMode;
+    if (modelAccessList !== undefined) updateData.modelAccessList = modelAccessList;
 
     const updated = await updateApiKey(id, updateData);
 

@@ -26,6 +26,7 @@ export default function APIPageClient({ machineId }) {
   const [confirmState, setConfirmState] = useState(null);
   const [combos, setCombos] = useState([]);
   const [editingComboAccess, setEditingComboAccess] = useState(null);
+  const [editingModelAccess, setEditingModelAccess] = useState(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -696,6 +697,31 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const normalizeAccessList = (value) => {
+    const items = Array.isArray(value) ? value : String(value || "").split(/[\n,]/);
+    return Array.from(new Set(items.map((item) => String(item).trim()).filter(Boolean)));
+  };
+
+  const handleSaveModelAccess = async () => {
+    if (!editingModelAccess) return;
+    const modelAccessMode = editingModelAccess.modelAccessMode === "blacklist" ? "blacklist" : "whitelist";
+    const modelAccessList = normalizeAccessList(editingModelAccess.modelAccessList);
+    try {
+      const res = await fetch(`/api/keys/${editingModelAccess.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelAccessMode, modelAccessList }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setKeys(prev => prev.map(k => k.id === editingModelAccess.id ? data.key : k));
+        setEditingModelAccess(null);
+      }
+    } catch (error) {
+      console.log("Error saving model access:", error);
+    }
+  };
+
   const toggleComboAccessItem = (comboName) => {
     setEditingComboAccess(prev => {
       if (!prev) return prev;
@@ -703,6 +729,16 @@ export default function APIPageClient({ machineId }) {
       if (list.has(comboName)) list.delete(comboName);
       else list.add(comboName);
       return { ...prev, comboAccessList: Array.from(list) };
+    });
+  };
+
+  const toggleModelAccessItem = (modelName) => {
+    setEditingModelAccess(prev => {
+      if (!prev) return prev;
+      const list = new Set(normalizeAccessList(prev.modelAccessList));
+      if (list.has(modelName)) list.delete(modelName);
+      else list.add(modelName);
+      return { ...prev, modelAccessList: Array.from(list) };
     });
   };
 
@@ -739,6 +775,10 @@ export default function APIPageClient({ machineId }) {
   }
 
   const currentEndpoint = baseUrl;
+  const modelCandidates = Array.from(new Set(
+    combos.flatMap((combo) => Array.isArray(combo.models) ? combo.models : [])
+      .filter((model) => typeof model === "string" && model.trim())
+  )).sort();
 
   return (
     <div className="flex flex-col gap-8">
@@ -1067,6 +1107,10 @@ export default function APIPageClient({ machineId }) {
                     Combo access: {(key.comboAccessMode || "blacklist") === "whitelist" ? "Whitelist" : "Blacklist"}
                     {Array.isArray(key.comboAccessList) && key.comboAccessList.length > 0 ? ` (${key.comboAccessList.length})` : " (empty)"}
                   </p>
+                  <p className="text-xs text-text-muted mt-1">
+                    Model access: {(key.modelAccessMode || "whitelist") === "blacklist" ? "Blacklist" : "Whitelist"}
+                    {Array.isArray(key.modelAccessList) && key.modelAccessList.length > 0 ? ` (${key.modelAccessList.length})` : " (empty)"}
+                  </p>
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
@@ -1101,6 +1145,17 @@ export default function APIPageClient({ machineId }) {
                     title="Edit combo access"
                   >
                     <span className="material-symbols-outlined text-[18px]">rule</span>
+                  </button>
+                  <button
+                    onClick={() => setEditingModelAccess({
+                      ...key,
+                      modelAccessMode: key.modelAccessMode || "whitelist",
+                      modelAccessList: Array.isArray(key.modelAccessList) ? key.modelAccessList : [],
+                    })}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                    title="Edit model access"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">model_training</span>
                   </button>
                   <button
                     onClick={() => handleDeleteKey(key.id)}
@@ -1207,6 +1262,78 @@ export default function APIPageClient({ machineId }) {
               Save
             </Button>
             <Button onClick={() => setEditingComboAccess(null)} variant="ghost" fullWidth>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Model Access Modal */}
+      <Modal
+        isOpen={!!editingModelAccess}
+        title="Model Access"
+        onClose={() => setEditingModelAccess(null)}
+      >
+        <div className="flex flex-col gap-4">
+          <div>
+            <p className="text-sm font-medium mb-1">{editingModelAccess?.name}</p>
+            <p className="text-xs text-text-muted">Rules apply to direct model requests. Combo-internal models bypass this gate.</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setEditingModelAccess(prev => ({ ...prev, modelAccessMode: "whitelist" }))}
+              className={`text-left rounded-lg border p-3 transition-colors ${editingModelAccess?.modelAccessMode !== "blacklist" ? "border-primary bg-primary/10" : "border-border bg-surface"}`}
+            >
+              <p className="text-sm font-medium">Whitelist</p>
+              <p className="text-xs text-text-muted mt-1">Only listed direct models are allowed. Empty means block all direct models.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditingModelAccess(prev => ({ ...prev, modelAccessMode: "blacklist" }))}
+              className={`text-left rounded-lg border p-3 transition-colors ${editingModelAccess?.modelAccessMode === "blacklist" ? "border-primary bg-primary/10" : "border-border bg-surface"}`}
+            >
+              <p className="text-sm font-medium">Blacklist</p>
+              <p className="text-xs text-text-muted mt-1">Listed direct models are blocked. Empty means allow all direct models.</p>
+            </button>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium mb-1 block">Direct model IDs</label>
+            <textarea
+              value={Array.isArray(editingModelAccess?.modelAccessList) ? editingModelAccess.modelAccessList.join("\n") : ""}
+              onChange={(e) => setEditingModelAccess(prev => ({ ...prev, modelAccessList: e.target.value.split(/[\n,]/) }))}
+              placeholder="openai/gpt-4.1\nanthropic/claude-sonnet-4"
+              className="w-full min-h-28 rounded-lg border border-border bg-input px-3 py-2 text-sm font-mono outline-none focus:border-primary"
+            />
+            <p className="text-xs text-text-muted mt-1">Use canonical provider/model IDs, one per line or comma-separated.</p>
+          </div>
+
+          <div className="border border-border rounded-lg max-h-64 overflow-y-auto">
+            {modelCandidates.length === 0 ? (
+              <p className="text-sm text-text-muted p-4">No combo models available as suggestions.</p>
+            ) : modelCandidates.map((modelName) => {
+              const checked = normalizeAccessList(editingModelAccess?.modelAccessList).includes(modelName);
+              return (
+                <label key={modelName} className="flex items-center justify-between gap-3 p-3 border-b border-border last:border-b-0 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5">
+                  <code className="text-xs font-mono truncate">{modelName}</code>
+                  <input
+                    type="checkbox"
+                    checked={!!checked}
+                    onChange={() => toggleModelAccessItem(modelName)}
+                    className="shrink-0"
+                  />
+                </label>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-2">
+            <Button onClick={handleSaveModelAccess} fullWidth>
+              Save
+            </Button>
+            <Button onClick={() => setEditingModelAccess(null)} variant="ghost" fullWidth>
               Cancel
             </Button>
           </div>
