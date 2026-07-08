@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { canonicalizeUsage, extractUsage, mergeUsage } from "../../open-sse/utils/usageTracking.js";
+import { extractUsageFromResponse } from "../../open-sse/handlers/chatCore/requestDetail.js";
 import { calculateCostFromTokens } from "../../open-sse/providers/pricing.js";
 import { toOpenAIUsage } from "../../open-sse/translator/concerns/usage.js";
 
@@ -47,6 +48,20 @@ describe("canonicalizeUsage", () => {
     expect(out.prompt_tokens).toBe(500);
     expect(out.cached_tokens).toBe(120);
     expect(out.reasoning_tokens).toBe(40);
+  });
+
+  it("passes through OpenAI Responses inclusive input details", () => {
+    const out = canonicalizeUsage({
+      input_tokens: 1000,
+      output_tokens: 100,
+      input_tokens_details: { cached_tokens: 800, cache_creation_tokens: 50 },
+      output_tokens_details: { reasoning_tokens: 25 },
+    });
+    expect(out.prompt_tokens).toBe(1000);
+    expect(out.completion_tokens).toBe(100);
+    expect(out.cached_tokens).toBe(800);
+    expect(out.cache_creation_input_tokens).toBe(50);
+    expect(out.reasoning_tokens).toBe(25);
   });
 
   it("handles no-cache usage", () => {
@@ -161,6 +176,25 @@ describe("Anthropic streaming usage (message_start carries cache, message_delta 
     expect(merged.prompt_tokens).toBe(100);
     expect(merged.cache_read_input_tokens).toBe(200);
     expect(merged.completion_tokens).toBe(50);
+  });
+});
+
+describe("OpenAI Responses usage", () => {
+  it("extractUsageFromResponse reads input_tokens_details cached tokens", () => {
+    const usage = extractUsageFromResponse({
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 100,
+        input_tokens_details: { cached_tokens: 800, cache_creation_tokens: 50 },
+        output_tokens_details: { reasoning_tokens: 25 },
+      },
+    });
+
+    expect(usage.prompt_tokens).toBe(1000);
+    expect(usage.completion_tokens).toBe(100);
+    expect(usage.cached_tokens).toBe(800);
+    expect(usage.cache_creation_input_tokens).toBe(50);
+    expect(usage.reasoning_tokens).toBe(25);
   });
 });
 

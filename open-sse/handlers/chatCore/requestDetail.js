@@ -24,6 +24,19 @@ export function extractRequestConfig(body, stream) {
 export function extractUsageFromResponse(responseBody) {
   if (!responseBody || typeof responseBody !== "object") return null;
 
+  // OpenAI Responses API format (Codex): input_tokens already includes cached tokens.
+  if (responseBody.usage?.input_tokens !== undefined && responseBody.usage?.input_tokens_details) {
+    return {
+      prompt_tokens: responseBody.usage.input_tokens || 0,
+      completion_tokens: responseBody.usage.output_tokens || 0,
+      cached_tokens: responseBody.usage.input_tokens_details?.cached_tokens,
+      cache_creation_input_tokens: responseBody.usage.input_tokens_details?.cache_creation_tokens,
+      reasoning_tokens: responseBody.usage.output_tokens_details?.reasoning_tokens,
+      input_tokens_details: responseBody.usage.input_tokens_details,
+      output_tokens_details: responseBody.usage.output_tokens_details
+    };
+  }
+
   // Claude format
   if (responseBody.usage?.input_tokens !== undefined) {
     return {

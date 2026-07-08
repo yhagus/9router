@@ -130,6 +130,12 @@ export function normalizeUsage(usage) {
   assignNumber("reasoning_tokens", usage?.reasoning_tokens);
 
   // Preserve nested details objects for OpenAI format forwarding
+  if (usage?.input_tokens_details && typeof usage.input_tokens_details === "object") {
+    normalized.input_tokens_details = usage.input_tokens_details;
+  }
+  if (usage?.output_tokens_details && typeof usage.output_tokens_details === "object") {
+    normalized.output_tokens_details = usage.output_tokens_details;
+  }
   if (usage?.prompt_tokens_details && typeof usage.prompt_tokens_details === "object") {
     normalized.prompt_tokens_details = usage.prompt_tokens_details;
   }
@@ -164,11 +170,13 @@ export function canonicalizeUsage(usage) {
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const completion = num(usage.completion_tokens ?? usage.output_tokens);
   const reasoning = num(usage.reasoning_tokens);
-  // Fall back to the nested prompt_tokens_details.cache_creation_tokens shape
-  // (buildUsage()'s OpenAI-forwarding format) when the top-level field is
-  // absent, so callers that pass a buildUsage() object through don't silently
-  // drop cache_creation.
-  const cacheCreation = num(usage.cache_creation_input_tokens ?? usage.prompt_tokens_details?.cache_creation_tokens);
+  // Fall back to nested details shapes when the top-level field is absent, so
+  // raw Responses/OpenAI-forwarding usage doesn't silently drop cache metadata.
+  const cacheCreation = num(
+    usage.cache_creation_input_tokens ??
+    usage.input_tokens_details?.cache_creation_tokens ??
+    usage.prompt_tokens_details?.cache_creation_tokens
+  );
 
   let prompt = num(usage.prompt_tokens ?? usage.input_tokens);
   let cached;
@@ -182,12 +190,18 @@ export function canonicalizeUsage(usage) {
   // sets that key (even to 0), so re-running canonicalizeUsage on an already-
   // folded result takes the passthrough branch instead of folding again.
   if (usage.cached_tokens === undefined &&
+      usage.input_tokens_details?.cached_tokens === undefined &&
+      usage.prompt_tokens_details?.cached_tokens === undefined &&
       (usage.cache_read_input_tokens !== undefined || usage.cache_creation_input_tokens !== undefined)) {
     cached = num(usage.cache_read_input_tokens);
     prompt = prompt + cached + cacheCreation;
   } else {
-    // OpenAI/Gemini path (or already-canonical input): prompt already includes cached_tokens.
-    cached = num(usage.cached_tokens);
+    // OpenAI/Gemini/Responses path (or already-canonical input): prompt/input already includes cached_tokens.
+    cached = num(
+      usage.cached_tokens ??
+      usage.input_tokens_details?.cached_tokens ??
+      usage.prompt_tokens_details?.cached_tokens
+    );
   }
 
   const result = {

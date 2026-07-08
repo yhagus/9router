@@ -85,6 +85,38 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
     expect(hist[0].tokens.cached_tokens).toBe(600);
   });
 
+  it("OpenAI Responses cache usage: nested input details are counted", async () => {
+    const adapter = driver.getAdapterSync();
+    adapter.transaction(() => {
+      adapter.run(`DELETE FROM usageHistory`);
+      adapter.run(`DELETE FROM usageDaily`);
+    });
+
+    await db.saveRequestUsage({
+      provider: "codex",
+      model: "gpt-5.5",
+      connectionId: "c-responses-cache",
+      apiKey: "sk-responses-cache-test",
+      tokens: {
+        input_tokens: 1000,
+        output_tokens: 100,
+        input_tokens_details: { cached_tokens: 800, cache_creation_tokens: 50 },
+      },
+      endpoint: "/v1/responses",
+      status: "ok",
+    });
+
+    const stats = await db.getUsageStats("all");
+    const entry = Object.values(stats.byApiKey).find(
+      (item) => item.rawModel === "gpt-5.5" && item.provider === "codex"
+    );
+
+    expect(stats.totalPromptTokens).toBe(1000);
+    expect(stats.totalCompletionTokens).toBe(100);
+    expect(stats.totalCachedTokens).toBe(800);
+    expect(entry.cachedTokens).toBe(800);
+  });
+
   it("uses raw history for all-time stats even when daily summaries are stale", async () => {
     const adapter = driver.getAdapterSync();
     const timestamp = new Date().toISOString();
