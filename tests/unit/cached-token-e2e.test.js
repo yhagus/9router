@@ -6,16 +6,19 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { canonicalizeUsage } from "../../open-sse/utils/usageTracking.js";
+import { stringifyJson } from "@/lib/db/helpers/jsonCol.js";
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
 let db;
+let driver;
 
 beforeAll(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "9router-cached-e2e-"));
   process.env.DATA_DIR = tempDir;
   vi.resetModules();
   db = await import("@/lib/db/index.js");
+  driver = await import("@/lib/db/driver.js");
   await db.initDb();
 });
 
@@ -80,5 +83,57 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
     const hist = await db.getUsageHistory({ provider: "openai" });
     expect(hist[0].tokens.prompt_tokens).toBe(1000);
     expect(hist[0].tokens.cached_tokens).toBe(600);
+  });
+
+  it("repairs stale daily summaries from history before all-time stats", async () => {
+    const adapter = driver.getAdapterSync();
+    const timestamp = new Date().toISOString();
+    const tokens = {
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      cache_read_input_tokens: 7,
+      cache_creation_input_tokens: 3,
+    };
+
+    adapter.transaction(() => {
+      adapter.run(`DELETE FROM usageHistory`);
+      adapter.run(`DELETE FROM usageDaily`);
+      adapter.run(`DELETE FROM _meta WHERE key IN ('usageDailySummaryVersion', 'usageDailyHistoryCount', 'usageDailyHistoryMaxId')`);
+      adapter.run(
+        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          timestamp,
+          "anthropic",
+          "claude-cache-test",
+          "c-stale",
+          "sk-test",
+          "/v1/messages",
+          10,
+          5,
+          0,
+          "ok",
+          stringifyJson(tokens),
+          stringifyJson({}),
+        ]
+      );
+      const day = timestamp.slice(0, 10);
+      adapter.run(
+        `INSERT INTO usageDaily(dateKey, data) VALUES(?, ?)`,
+        [day, stringifyJson({ requests: 1, promptTokens: 1, completionTokens: 1, cachedTokens: 0, cost: 0, byProvider: {} })]
+      );
+    });
+
+    const live = await db.getUsageStats("24h");
+    const all = await db.getUsageStats("all");
+
+    expect(live.totalRequests).toBe(1);
+    expect(live.totalPromptTokens).toBe(20);
+    expect(live.totalCompletionTokens).toBe(5);
+    expect(live.totalCachedTokens).toBe(7);
+    expect(all.totalRequests).toBe(live.totalRequests);
+    expect(all.totalPromptTokens).toBe(live.totalPromptTokens);
+    expect(all.totalCompletionTokens).toBe(live.totalCompletionTokens);
+    expect(all.totalCachedTokens).toBe(live.totalCachedTokens);
+    expect(all.byProvider.anthropic.cachedTokens).toBe(7);
   });
 });

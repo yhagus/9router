@@ -1,7 +1,6 @@
 import { EventEmitter } from "events";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
-import { getMeta, setMeta } from "../helpers/metaStore.js";
 
 function maskApiKey(key) {
   if (!key || typeof key !== "string") return null;
@@ -9,6 +8,12 @@ function maskApiKey(key) {
   return key.slice(0, 8) + "***";
 }
 
+const DAILY_SUMMARY_VERSION = "2";
+const DAILY_SUMMARY_META = {
+  version: "usageDailySummaryVersion",
+  count: "usageDailyHistoryCount",
+  maxId: "usageDailyHistoryMaxId",
+};
 const PENDING_TIMEOUT_MS = 60 * 1000;
 const RING_CAP = 50;
 const CONN_CACHE_TTL_MS = 30 * 1000;
@@ -50,6 +55,112 @@ function getLocalDateKey(timestamp) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function tokenNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function firstTokenNumber(...values) {
+  for (const value of values) {
+    const n = tokenNumber(value);
+    if (n !== 0) return n;
+  }
+  return 0;
+}
+
+function getUsageTokenCounts(tokens = {}, fallback = {}) {
+  const source = tokens || {};
+  const cacheCreationTokens = firstTokenNumber(source.cache_creation_input_tokens, source.prompt_tokens_details?.cache_creation_tokens);
+  const explicitCachedTokens = Object.prototype.hasOwnProperty.call(source, "cached_tokens");
+  const hasOpenAIDetails = !explicitCachedTokens && Object.prototype.hasOwnProperty.call(source, "prompt_tokens_details");
+  const cachedTokens = explicitCachedTokens
+    ? tokenNumber(source.cached_tokens)
+    : firstTokenNumber(source.cache_read_input_tokens, source.prompt_tokens_details?.cached_tokens);
+  const basePromptTokens = firstTokenNumber(source.prompt_tokens, source.input_tokens, fallback.promptTokens);
+  const promptTokens = explicitCachedTokens || hasOpenAIDetails
+    ? basePromptTokens
+    : basePromptTokens + cachedTokens + cacheCreationTokens;
+
+  return {
+    promptTokens,
+    completionTokens: firstTokenNumber(source.completion_tokens, source.output_tokens, fallback.completionTokens),
+    cachedTokens,
+  };
+}
+
+function createEmptyDay() {
+  return {
+    requests: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    cachedTokens: 0,
+    cost: 0,
+    byProvider: {},
+    byModel: {},
+    byAccount: {},
+    byApiKey: {},
+    byEndpoint: {},
+  };
+}
+
+function getMetaValue(adapter, key) {
+  const row = adapter.get(`SELECT value FROM _meta WHERE key = ?`, [key]);
+  return row ? row.value : null;
+}
+
+function setMetaValue(adapter, key, value) {
+  adapter.run(
+    `INSERT INTO _meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, String(value)]
+  );
+}
+
+function getUsageHistoryMarker(adapter) {
+  const row = adapter.get(`SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS maxId FROM usageHistory`);
+  return {
+    count: tokenNumber(row?.count),
+    maxId: tokenNumber(row?.maxId),
+  };
+}
+
+function getStoredDailySummaryMarker(adapter) {
+  return {
+    version: getMetaValue(adapter, DAILY_SUMMARY_META.version),
+    count: tokenNumber(getMetaValue(adapter, DAILY_SUMMARY_META.count)),
+    maxId: tokenNumber(getMetaValue(adapter, DAILY_SUMMARY_META.maxId)),
+  };
+}
+
+function isDailySummaryMarkedCurrent(adapter, marker = getUsageHistoryMarker(adapter)) {
+  const stored = getStoredDailySummaryMarker(adapter);
+  return stored.version === DAILY_SUMMARY_VERSION
+    && stored.count === marker.count
+    && stored.maxId === marker.maxId;
+}
+
+function setDailySummaryMarker(adapter, marker) {
+  setMetaValue(adapter, DAILY_SUMMARY_META.version, DAILY_SUMMARY_VERSION);
+  setMetaValue(adapter, DAILY_SUMMARY_META.count, marker.count);
+  setMetaValue(adapter, DAILY_SUMMARY_META.maxId, marker.maxId);
+}
+
+function invalidateDailySummaryMarker(adapter) {
+  adapter.run(`DELETE FROM _meta WHERE key IN (?, ?, ?)`, [
+    DAILY_SUMMARY_META.version,
+    DAILY_SUMMARY_META.count,
+    DAILY_SUMMARY_META.maxId,
+  ]);
+}
+
+function bumpDailySummaryMarkerAfterInsert(adapter, insertedId) {
+  const stored = getStoredDailySummaryMarker(adapter);
+  if (stored.version !== DAILY_SUMMARY_VERSION) return;
+  setDailySummaryMarker(adapter, {
+    count: stored.count + 1,
+    maxId: Math.max(stored.maxId, tokenNumber(insertedId)),
+  });
+}
+
 function addToCounter(target, key, values) {
   if (!target[key]) target[key] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
   target[key].requests += values.requests || 1;
@@ -61,9 +172,7 @@ function addToCounter(target, key, values) {
 }
 
 function aggregateEntryToDay(day, entry) {
-  const promptTokens = entry.tokens?.prompt_tokens || entry.tokens?.input_tokens || 0;
-  const completionTokens = entry.tokens?.completion_tokens || entry.tokens?.output_tokens || 0;
-  const cachedTokens = entry.tokens?.cached_tokens || entry.tokens?.cache_read_input_tokens || 0;
+  const { promptTokens, completionTokens, cachedTokens } = getUsageTokenCounts(entry.tokens, entry);
   const cost = entry.cost || 0;
   const vals = { promptTokens, completionTokens, cachedTokens, cost };
 
@@ -95,6 +204,59 @@ function aggregateEntryToDay(day, entry) {
   const endpoint = entry.endpoint || "Unknown";
   const epKey = `${endpoint}|${entry.model}|${entry.provider || "unknown"}`;
   addToCounter(day.byEndpoint, epKey, { ...vals, meta: { endpoint, rawModel: entry.model, provider: entry.provider } });
+}
+
+function entryFromUsageRow(row) {
+  const tokens = parseJson(row.tokens, {}) || {};
+  const fallback = {
+    promptTokens: row.promptTokens,
+    completionTokens: row.completionTokens,
+  };
+  const { promptTokens, completionTokens } = getUsageTokenCounts(tokens, fallback);
+  return {
+    id: row.id,
+    timestamp: row.timestamp,
+    provider: row.provider,
+    model: row.model,
+    connectionId: row.connectionId,
+    apiKey: row.apiKey,
+    endpoint: row.endpoint,
+    cost: row.cost || 0,
+    status: row.status || "ok",
+    tokens,
+    promptTokens,
+    completionTokens,
+  };
+}
+
+function rebuildUsageDailySummariesWithAdapter(adapter, marker = getUsageHistoryMarker(adapter)) {
+  const rows = adapter.all(
+    `SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens
+     FROM usageHistory
+     ORDER BY id ASC`
+  );
+  const days = {};
+
+  for (const row of rows) {
+    const entry = entryFromUsageRow(row);
+    const dateKey = getLocalDateKey(entry.timestamp);
+    if (!days[dateKey]) days[dateKey] = createEmptyDay();
+    aggregateEntryToDay(days[dateKey], entry);
+  }
+
+  adapter.transaction(() => {
+    adapter.run(`DELETE FROM usageDaily`);
+    for (const [dateKey, day] of Object.entries(days)) {
+      adapter.run(`INSERT INTO usageDaily(dateKey, data) VALUES(?, ?)`, [dateKey, stringifyJson(day)]);
+    }
+    setDailySummaryMarker(adapter, marker);
+  });
+}
+
+function ensureUsageDailyCurrent(adapter) {
+  const marker = getUsageHistoryMarker(adapter);
+  if (isDailySummaryMarkedCurrent(adapter, marker)) return;
+  rebuildUsageDailySummariesWithAdapter(adapter, marker);
 }
 
 function pushToRing(entry) {
@@ -218,10 +380,11 @@ export async function getActiveRequests() {
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
     .map((e) => {
       const t = e.tokens || {};
+      const { promptTokens, completionTokens } = getUsageTokenCounts(t, e);
       return {
         timestamp: e.timestamp, model: e.model, provider: e.provider || "",
-        promptTokens: t.prompt_tokens || t.input_tokens || 0,
-        completionTokens: t.completion_tokens || t.output_tokens || 0,
+        promptTokens,
+        completionTokens,
         status: e.status || "ok",
       };
     })
@@ -247,8 +410,7 @@ export async function saveRequestUsage(entry) {
     entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
 
     const tokens = entry.tokens || {};
-    const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
-    const completionTokens = tokens.completion_tokens || tokens.output_tokens || 0;
+    const { promptTokens, completionTokens } = getUsageTokenCounts(tokens);
 
     let inserted = false;
 
@@ -275,11 +437,12 @@ export async function saveRequestUsage(entry) {
       if (existing) {
         if (!existing.endpoint && entry.endpoint) {
           db.run(`UPDATE usageHistory SET endpoint = ? WHERE id = ?`, [entry.endpoint, existing.id]);
+          invalidateDailySummaryMarker(db);
         }
         return;
       }
 
-      db.run(
+      const insertResult = db.run(
         `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           entry.timestamp, entry.provider || null, entry.model || null,
@@ -291,12 +454,10 @@ export async function saveRequestUsage(entry) {
 
       const dateKey = getLocalDateKey(entry.timestamp);
       const row = db.get(`SELECT data FROM usageDaily WHERE dateKey = ?`, [dateKey]);
-      const day = row ? parseJson(row.data, {}) : {
-        requests: 0, promptTokens: 0, completionTokens: 0, cost: 0,
-        byProvider: {}, byModel: {}, byAccount: {}, byApiKey: {}, byEndpoint: {},
-      };
+      const day = row ? parseJson(row.data, {}) : createEmptyDay();
       aggregateEntryToDay(day, entry);
       db.run(`INSERT INTO usageDaily(dateKey, data) VALUES(?, ?) ON CONFLICT(dateKey) DO UPDATE SET data = excluded.data`, [dateKey, stringifyJson(day)]);
+      bumpDailySummaryMarkerAfterInsert(db, insertResult?.lastInsertRowid);
 
       // Atomic counter increment in same transaction
       const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
@@ -355,9 +516,7 @@ export async function getUsageStatsForApiKey(apiKey) {
 
   for (const r of rows) {
     const tokens = parseJson(r.tokens, {}) || {};
-    const promptTokens = tokens.prompt_tokens || tokens.input_tokens || r.promptTokens || 0;
-    const completionTokens = tokens.completion_tokens || tokens.output_tokens || r.completionTokens || 0;
-    const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
+    const { promptTokens, completionTokens, cachedTokens } = getUsageTokenCounts(tokens, r);
     const modelKey = r.provider ? `${r.model} (${r.provider})` : r.model;
 
     stats.totalPromptTokens += promptTokens;
@@ -438,11 +597,12 @@ export async function getUsageStats(period = "all") {
   const recentRequests = recentRows
     .map((r) => {
       const t = parseJson(r.tokens, {}) || {};
+      const { promptTokens, completionTokens, cachedTokens } = getUsageTokenCounts(t, r);
       return {
         timestamp: r.timestamp, model: r.model, provider: r.provider || "",
-        promptTokens: t.prompt_tokens || t.input_tokens || 0,
-        completionTokens: t.completion_tokens || t.output_tokens || 0,
-        cachedTokens: t.cached_tokens || t.cache_read_input_tokens || 0,
+        promptTokens,
+        completionTokens,
+        cachedTokens,
         status: r.status || "ok",
       };
     })
@@ -510,6 +670,8 @@ export async function getUsageStats(period = "all") {
   const useDailySummary = period !== "24h" && period !== "today";
 
   if (useDailySummary) {
+    ensureUsageDailyCurrent(db);
+
     const periodDays = { "7d": 7, "30d": 30, "60d": 60 };
     const maxDays = periodDays[period] || null;
     const dayRows = loadDaysInRange(db, maxDays);
@@ -644,9 +806,7 @@ export async function getUsageStats(period = "all") {
 
     for (const r of filtered) {
       const tokens = parseJson(r.tokens, {}) || {};
-      const promptTokens = tokens.prompt_tokens || 0;
-      const completionTokens = tokens.completion_tokens || 0;
-      const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
+      const { promptTokens, completionTokens, cachedTokens } = getUsageTokenCounts(tokens, r);
       const entryCost = r.cost || 0;
       const providerDisplayName = providerNodeNameMap[r.provider] || r.provider;
 
@@ -774,6 +934,8 @@ export async function getChartData(period = "7d") {
   }
 
   if (period === "all") {
+    ensureUsageDailyCurrent(db);
+
     const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
     return loadDaysInRange(db, null)
       .sort((a, b) => String(a.dateKey).localeCompare(String(b.dateKey)))
@@ -792,6 +954,8 @@ export async function getChartData(period = "7d") {
   const bucketCount = period === "7d" ? 7 : period === "30d" ? 30 : 60;
   const today = new Date();
   const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  ensureUsageDailyCurrent(db);
 
   // Build map of dateKey → day data
   const dayRows = loadDaysInRange(db, bucketCount);
