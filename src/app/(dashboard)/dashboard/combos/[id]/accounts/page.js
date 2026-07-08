@@ -17,6 +17,11 @@ function getConnectionLabel(conn) {
   return conn.displayName || conn.name || conn.email || conn.id;
 }
 
+function getConnectionEmail(conn) {
+  if (!conn.email || conn.email === getConnectionLabel(conn)) return null;
+  return conn.email;
+}
+
 function resolveModelProvider(entry, providerNodes, aliases) {
   const { prefix, model } = parseModelEntry(entry);
   if (!prefix && aliases?.[entry]) return resolveModelProvider(aliases[entry], providerNodes, aliases);
@@ -205,7 +210,9 @@ export default function ComboAccountsPage() {
                     <label key={conn.id} className="flex cursor-pointer items-center justify-between gap-3 border-b border-border p-3 last:border-b-0 hover:bg-black/5 dark:hover:bg-white/5">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{getConnectionLabel(conn)}</p>
-                        <p className="truncate text-xs text-text-muted">Priority {conn.priority || "-"} · {conn.authType}</p>
+                        <p className="truncate text-xs text-text-muted">
+                          {[getConnectionEmail(conn), `Priority ${conn.priority || "-"}`, conn.authType].filter(Boolean).join(" · ")}
+                        </p>
                       </div>
                       <input
                         type="checkbox"
