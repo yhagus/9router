@@ -85,7 +85,7 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
     expect(hist[0].tokens.cached_tokens).toBe(600);
   });
 
-  it("repairs stale daily summaries from history before all-time stats", async () => {
+  it("uses raw history for all-time stats even when daily summaries are stale", async () => {
     const adapter = driver.getAdapterSync();
     const timestamp = new Date().toISOString();
     const tokens = {
@@ -135,5 +135,68 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
     expect(all.totalCompletionTokens).toBe(live.totalCompletionTokens);
     expect(all.totalCachedTokens).toBe(live.totalCachedTokens);
     expect(all.byProvider.anthropic.cachedTokens).toBe(7);
+    expect(all.byApiKey["s***|claude-cache-test|anthropic"].cachedTokens).toBe(7);
+  });
+
+  it("keeps all-time API-key cached tokens at least as large as today and 24h", async () => {
+    const adapter = driver.getAdapterSync();
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 25 * 60 * 60 * 1000);
+    const apiKey = "sk-invariant";
+
+    adapter.transaction(() => {
+      adapter.run(`DELETE FROM usageHistory`);
+      adapter.run(`DELETE FROM usageDaily`);
+      adapter.run(`DELETE FROM _meta WHERE key IN ('usageDailySummaryVersion', 'usageDailyHistoryCount', 'usageDailyHistoryMaxId')`);
+      adapter.run(
+        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          now.toISOString(),
+          "openai",
+          "gpt-cache-test",
+          "c-now",
+          apiKey,
+          "/v1/chat/completions",
+          17000000,
+          100,
+          0,
+          "ok",
+          stringifyJson({ prompt_tokens: 17000000, completion_tokens: 100, cached_tokens: 16970752 }),
+          stringifyJson({}),
+        ]
+      );
+      adapter.run(
+        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          yesterday.toISOString(),
+          "openai",
+          "gpt-cache-test",
+          "c-old",
+          apiKey,
+          "/v1/chat/completions",
+          50000,
+          20,
+          0,
+          "ok",
+          stringifyJson({ prompt_tokens: 50000, completion_tokens: 20, cached_tokens: 45568 }),
+          stringifyJson({}),
+        ]
+      );
+      adapter.run(
+        `INSERT INTO usageDaily(dateKey, data) VALUES(?, ?)`,
+        [now.toISOString().slice(0, 10), stringifyJson({ requests: 1, promptTokens: 1, completionTokens: 1, cachedTokens: 45568, cost: 0, byApiKey: {} })]
+      );
+    });
+
+    const today = await db.getUsageStats("today");
+    const rolling = await db.getUsageStats("24h");
+    const all = await db.getUsageStats("all");
+    const apiKeyGroup = "sk-invar***|gpt-cache-test|openai";
+
+    expect(today.byApiKey[apiKeyGroup].cachedTokens).toBe(16970752);
+    expect(rolling.byApiKey[apiKeyGroup].cachedTokens).toBe(16970752);
+    expect(all.byApiKey[apiKeyGroup].cachedTokens).toBe(17016320);
+    expect(all.byApiKey[apiKeyGroup].cachedTokens).toBeGreaterThanOrEqual(today.byApiKey[apiKeyGroup].cachedTokens);
+    expect(all.byApiKey[apiKeyGroup].cachedTokens).toBeGreaterThanOrEqual(rolling.byApiKey[apiKeyGroup].cachedTokens);
   });
 });
