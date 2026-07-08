@@ -135,7 +135,11 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
     expect(all.totalCompletionTokens).toBe(live.totalCompletionTokens);
     expect(all.totalCachedTokens).toBe(live.totalCachedTokens);
     expect(all.byProvider.anthropic.cachedTokens).toBe(7);
-    expect(all.byApiKey["s***|claude-cache-test|anthropic"].cachedTokens).toBe(7);
+    const apiKeyEntry = Object.values(all.byApiKey).find(
+      (entry) => entry.rawModel === "claude-cache-test" && entry.provider === "anthropic"
+    );
+    expect(apiKeyEntry.cachedTokens).toBe(7);
+    expect(apiKeyEntry.apiKeyKey).toMatch(/^api-key-hash:/);
   });
 
   it("keeps all-time API-key cached tokens at least as large as today and 24h", async () => {
@@ -191,12 +195,73 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
     const today = await db.getUsageStats("today");
     const rolling = await db.getUsageStats("24h");
     const all = await db.getUsageStats("all");
-    const apiKeyGroup = "sk-invar***|gpt-cache-test|openai";
+    const findApiKeyEntry = (stats) => Object.values(stats.byApiKey).find(
+      (entry) => entry.rawModel === "gpt-cache-test" && entry.provider === "openai"
+    );
+    const todayApiKey = findApiKeyEntry(today);
+    const rollingApiKey = findApiKeyEntry(rolling);
+    const allApiKey = findApiKeyEntry(all);
 
-    expect(today.byApiKey[apiKeyGroup].cachedTokens).toBe(16970752);
-    expect(rolling.byApiKey[apiKeyGroup].cachedTokens).toBe(16970752);
-    expect(all.byApiKey[apiKeyGroup].cachedTokens).toBe(17016320);
-    expect(all.byApiKey[apiKeyGroup].cachedTokens).toBeGreaterThanOrEqual(today.byApiKey[apiKeyGroup].cachedTokens);
-    expect(all.byApiKey[apiKeyGroup].cachedTokens).toBeGreaterThanOrEqual(rolling.byApiKey[apiKeyGroup].cachedTokens);
+    expect(todayApiKey.cachedTokens).toBe(16970752);
+    expect(rollingApiKey.cachedTokens).toBe(16970752);
+    expect(allApiKey.cachedTokens).toBe(17016320);
+    expect(allApiKey.cachedTokens).toBeGreaterThanOrEqual(todayApiKey.cachedTokens);
+    expect(allApiKey.cachedTokens).toBeGreaterThanOrEqual(rollingApiKey.cachedTokens);
+  });
+
+  it("does not merge API keys that share a mask and display name", async () => {
+    const adapter = driver.getAdapterSync();
+    const timestamp = new Date().toISOString();
+    const apiKeyA = "sk-shared-machine-alpha-11111111";
+    const apiKeyB = "sk-shared-machine-beta-22222222";
+
+    adapter.transaction(() => {
+      adapter.run(`DELETE FROM usageHistory`);
+      adapter.run(`DELETE FROM usageDaily`);
+      adapter.run(`DELETE FROM apiKeys`);
+      adapter.run(
+        `INSERT INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["api-key-a", apiKeyA, "Shared Name", "machine", 1, "blacklist", stringifyJson([]), "whitelist", stringifyJson([]), timestamp]
+      );
+      adapter.run(
+        `INSERT INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["api-key-b", apiKeyB, "Shared Name", "machine", 1, "blacklist", stringifyJson([]), "whitelist", stringifyJson([]), timestamp]
+      );
+      for (const [apiKey, cachedTokens] of [[apiKeyA, 11], [apiKeyB, 22]]) {
+        adapter.run(
+          `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            timestamp,
+            "openai",
+            "gpt-same-key-test",
+            "c-same",
+            apiKey,
+            "/v1/chat/completions",
+            100,
+            10,
+            0,
+            "ok",
+            stringifyJson({ prompt_tokens: 100, completion_tokens: 10, cached_tokens: cachedTokens }),
+            stringifyJson({}),
+          ]
+        );
+      }
+    });
+
+    const stats = await db.getUsageStats("all");
+    const groupedKeys = Object.keys(stats.byApiKey)
+      .filter((key) => key.endsWith("|gpt-same-key-test|openai"))
+      .sort();
+
+    expect(groupedKeys).toEqual([
+      "api-key:api-key-a|gpt-same-key-test|openai",
+      "api-key:api-key-b|gpt-same-key-test|openai",
+    ]);
+    expect(stats.byApiKey[groupedKeys[0]].keyName).toBe("Shared Name");
+    expect(stats.byApiKey[groupedKeys[1]].keyName).toBe("Shared Name");
+    expect(stats.byApiKey[groupedKeys[0]].apiKeyMasked).toBe(stats.byApiKey[groupedKeys[1]].apiKeyMasked);
+    expect(stats.byApiKey[groupedKeys[0]].apiKeyKey).not.toBe(stats.byApiKey[groupedKeys[1]].apiKeyKey);
+    expect(stats.byApiKey[groupedKeys[0]].cachedTokens).toBe(11);
+    expect(stats.byApiKey[groupedKeys[1]].cachedTokens).toBe(22);
   });
 });

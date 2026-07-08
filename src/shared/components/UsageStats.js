@@ -116,9 +116,15 @@ function getGroupKey(item, keyField) {
     case "rawModel": return item.rawModel || "Unknown Model";
     case "accountName": return item.accountName || `Account ${item.connectionId?.slice(0, 8)}...` || "Unknown Account";
     case "keyName": return item.keyName || "Unknown Key";
+    case "apiKeyKey": return item.apiKeyKey || item.keyName || "Unknown Key";
     case "endpoint": return item.endpoint || "Unknown Endpoint";
     default: return item[keyField] || "Unknown";
   }
+}
+
+function getGroupLabel(item, keyField, groupKey) {
+  if (keyField === "apiKeyKey") return item.apiKeyLabel || item.keyName || groupKey;
+  return groupKey;
 }
 
 function groupDataByKey(data, keyField) {
@@ -129,6 +135,7 @@ function groupDataByKey(data, keyField) {
     if (!groups[gk]) {
       groups[gk] = {
         groupKey: gk,
+        groupLabel: getGroupLabel(item, keyField, gk),
         summary: { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, inputCost: 0, cachedCost: 0, outputCost: 0, lastUsed: null, pending: 0 },
         items: [],
       };
@@ -381,7 +388,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       case "apiKey": {
         return {
           columns: API_KEY_COLUMNS,
-          groupedData: groupDataByKey(sortData(stats.byApiKey, {}, sortBy, sortOrder), "keyName"),
+          groupedData: groupDataByKey(sortData(stats.byApiKey, {}, sortBy, sortOrder), "apiKeyKey"),
           storageKey: "usage-stats:expanded-apikeys",
           emptyMessage: "No API key usage recorded yet.",
           renderSummaryCells: (group) => (

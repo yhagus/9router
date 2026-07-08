@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { EventEmitter } from "events";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
@@ -6,6 +7,25 @@ function maskApiKey(key) {
   if (!key || typeof key !== "string") return null;
   if (key.length <= 8) return key.charAt(0) + "***";
   return key.slice(0, 8) + "***";
+}
+
+function hashApiKey(key) {
+  if (!key || typeof key !== "string") return null;
+  return crypto.createHash("sha256").update(key).digest("hex").slice(0, 12);
+}
+
+function getApiKeyIdentity(key, keyInfo) {
+  if (!key || typeof key !== "string") return "local-no-key";
+  if (keyInfo?.id) return `api-key:${keyInfo.id}`;
+  const hash = hashApiKey(key);
+  return hash ? `api-key-hash:${hash}` : "unknown-api-key";
+}
+
+function getApiKeyLabel(keyName, apiKeyMasked, apiKeyKey) {
+  if (!apiKeyMasked || !apiKeyKey || apiKeyKey === "local-no-key") return keyName;
+  const identity = apiKeyKey.split(":").pop()?.slice(0, 12);
+  const identityLabel = apiKeyKey.startsWith("api-key-hash:") ? "hash" : "id";
+  return identity ? `${keyName} (${apiKeyMasked}, ${identityLabel} ${identity})` : `${keyName} (${apiKeyMasked})`;
 }
 
 const PENDING_TIMEOUT_MS = 60 * 1000;
@@ -133,9 +153,9 @@ function aggregateEntryToDay(day, entry) {
     addToCounter(day.byAccount, entry.connectionId, { ...vals, meta: { rawModel: entry.model, provider: entry.provider } });
   }
 
-  const apiKeyVal = entry.apiKey && typeof entry.apiKey === "string" ? entry.apiKey : "local-no-key";
+  const apiKeyVal = getApiKeyIdentity(entry.apiKey, null);
   const akModelKey = `${apiKeyVal}|${entry.model}|${entry.provider || "unknown"}`;
-  addToCounter(day.byApiKey, akModelKey, { ...vals, meta: { rawModel: entry.model, provider: entry.provider, apiKey: entry.apiKey || null } });
+  addToCounter(day.byApiKey, akModelKey, { ...vals, meta: { rawModel: entry.model, provider: entry.provider, apiKeyMasked: maskApiKey(entry.apiKey), apiKeyKey: apiKeyVal } });
 
   const endpoint = entry.endpoint || "Unknown";
   const epKey = `${endpoint}|${entry.model}|${entry.provider || "unknown"}`;
@@ -617,20 +637,24 @@ export async function getUsageStats(period = "all") {
 
     if (r.apiKey && typeof r.apiKey === "string") {
       const keyInfo = apiKeyMap[r.apiKey];
-      const keyName = keyInfo?.name || r.apiKey.slice(0, 8) + "...";
       const apiKeyMasked = maskApiKey(r.apiKey);
-      const akKey = `${apiKeyMasked}|${r.model}|${r.provider || "unknown"}`;
+      const apiKeyKey = getApiKeyIdentity(r.apiKey, keyInfo);
+      const keyName = keyInfo?.name || (apiKeyMasked ? `${apiKeyMasked}` : r.apiKey.slice(0, 8) + "...");
+      const apiKeyLabel = getApiKeyLabel(keyName, apiKeyMasked, apiKeyKey);
+      const akKey = `${apiKeyKey}|${r.model}|${r.provider || "unknown"}`;
       if (!stats.byApiKey[akKey]) {
-        stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked, keyName, apiKeyKey: apiKeyMasked, lastUsed: r.timestamp };
+        stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked, keyName, apiKeyKey, apiKeyLabel, lastUsed: r.timestamp };
       }
       const ake = stats.byApiKey[akKey];
       ake.requests++; ake.promptTokens += promptTokens; ake.completionTokens += completionTokens; ake.cachedTokens += cachedTokens; ake.cost += entryCost;
       if (new Date(r.timestamp) > new Date(ake.lastUsed)) ake.lastUsed = r.timestamp;
     } else {
-      if (!stats.byApiKey["local-no-key"]) {
-        stats.byApiKey["local-no-key"] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked: null, keyName: "Local (No API Key)", apiKeyKey: "local-no-key", lastUsed: r.timestamp };
+      const apiKeyKey = "local-no-key";
+      const akKey = `${apiKeyKey}|${r.model}|${r.provider || "unknown"}`;
+      if (!stats.byApiKey[akKey]) {
+        stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked: null, keyName: "Local (No API Key)", apiKeyKey, apiKeyLabel: "Local (No API Key)", lastUsed: r.timestamp };
       }
-      const ake = stats.byApiKey["local-no-key"];
+      const ake = stats.byApiKey[akKey];
       ake.requests++; ake.promptTokens += promptTokens; ake.completionTokens += completionTokens; ake.cachedTokens += cachedTokens; ake.cost += entryCost;
       if (new Date(r.timestamp) > new Date(ake.lastUsed)) ake.lastUsed = r.timestamp;
     }

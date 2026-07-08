@@ -29,34 +29,31 @@ describe("AUDIT-002: API key masking", () => {
     expect(historyReturn[0]).not.toContain("apiKey: r.apiKey");
   });
 
-  it("getUsageStats should use apiKeyMasked in byApiKey entries", () => {
+  it("getUsageStats should expose masked API keys in byApiKey entries", () => {
     const source = fs.readFileSync(
       path.resolve("src/lib/db/repos/usageRepo.js"),
       "utf-8"
     );
-    // Both code paths (daily summary + 24h live) should use apiKeyMasked
     const maskedCount = (source.match(/apiKeyMasked/g) || []).length;
     expect(maskedCount).toBeGreaterThanOrEqual(4); // function def + 3 usage sites
 
-    // The byApiKey stats entries should use apiKeyMasked, not raw apiKey
-    // Check the daily summary path
-    const dailyPath = source.match(/stats\.byApiKey\[akKey\] = \{[^}]*apiKeyMasked[^}]*\}/);
-    expect(dailyPath).not.toBeNull();
-    // Check the 24h live path
     const livePath = source.match(/stats\.byApiKey\[akKey\] = \{[^}]*apiKeyMasked[^}]*\}/g);
     expect(livePath).not.toBeNull();
     expect(livePath.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("byApiKey object keys should use masked key, not raw key", () => {
+  it("byApiKey object keys should use safe identities, not raw or display-only keys", () => {
     const source = fs.readFileSync(
       path.resolve("src/lib/db/repos/usageRepo.js"),
       "utf-8"
     );
-    // The 24h path should use apiKeyMasked in the akKey template
-    expect(source).toContain("${apiKeyMasked}|${r.model}|${r.provider");
-    // Should NOT use raw r.apiKey in the key
+    expect(source).toContain("function hashApiKey");
+    expect(source).toContain("function getApiKeyIdentity");
+    expect(source).toContain("${apiKeyKey}|${r.model}|${r.provider");
+    expect(source).toContain("getApiKeyIdentity(entry.apiKey");
+    expect(source).toContain("getApiKeyIdentity(r.apiKey");
     expect(source).not.toContain("${r.apiKey}|${r.model}|${r.provider");
+    expect(source).not.toContain("${apiKeyMasked}|${r.model}|${r.provider");
   });
 });
 
