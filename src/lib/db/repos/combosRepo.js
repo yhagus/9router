@@ -86,6 +86,37 @@ export async function updateCombo(id, data) {
 
 export async function deleteCombo(id) {
   const db = await getAdapter();
-  const res = db.run(`DELETE FROM combos WHERE id = ?`, [id]);
-  return (res?.changes ?? 0) > 0;
+  let deleted = false;
+
+  db.transaction(() => {
+    const combo = db.get(`SELECT name FROM combos WHERE id = ?`, [id]);
+    if (!combo) return;
+
+    db.run(`DELETE FROM combos WHERE id = ?`, [id]);
+
+    // Combo access rules store names, so remove this name from every key
+    // while the combo deletion is still part of the same transaction.
+    if (combo.name) {
+      const keys = db.all(`SELECT id, comboAccessList FROM apiKeys`);
+      for (const key of keys) {
+        const accessList = parseJson(key.comboAccessList, []);
+        if (!Array.isArray(accessList)) continue;
+
+        const nextAccessList = Array.from(new Set(
+          accessList
+            .filter((item) => typeof item === "string" && item.trim())
+            .map((item) => item.trim())
+            .filter((item) => item !== combo.name)
+        ));
+
+        if (nextAccessList.length !== accessList.length || nextAccessList.some((item, index) => item !== accessList[index])) {
+          db.run(`UPDATE apiKeys SET comboAccessList = ? WHERE id = ?`, [stringifyJson(nextAccessList), key.id]);
+        }
+      }
+    }
+
+    deleted = true;
+  });
+
+  return deleted;
 }

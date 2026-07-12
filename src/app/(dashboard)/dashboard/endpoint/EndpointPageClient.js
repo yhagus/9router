@@ -732,6 +732,27 @@ export default function APIPageClient({ machineId }) {
     });
   };
 
+  const removeComboAccessItem = (comboName) => {
+    setEditingComboAccess(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        comboAccessList: (prev.comboAccessList || []).filter((name) => name !== comboName),
+      };
+    });
+  };
+
+  const removeRemovedComboAccessItems = () => {
+    setEditingComboAccess(prev => {
+      if (!prev) return prev;
+      const activeComboNames = new Set(combos.map((combo) => combo.name));
+      return {
+        ...prev,
+        comboAccessList: (prev.comboAccessList || []).filter((name) => activeComboNames.has(name)),
+      };
+    });
+  };
+
   const toggleModelAccessItem = (modelName) => {
     setEditingModelAccess(prev => {
       if (!prev) return prev;
@@ -779,6 +800,10 @@ export default function APIPageClient({ machineId }) {
     combos.flatMap((combo) => Array.isArray(combo.models) ? combo.models : [])
       .filter((model) => typeof model === "string" && model.trim())
   )).sort();
+  const activeComboNames = new Set(combos.map((combo) => combo.name));
+  const removedComboNames = Array.from(new Set(
+    (editingComboAccess?.comboAccessList || []).filter((name) => !activeComboNames.has(name))
+  ));
 
   return (
     <div className="flex flex-col gap-8">
@@ -1235,12 +1260,12 @@ export default function APIPageClient({ machineId }) {
             </button>
           </div>
 
-          <div className="border border-border rounded-lg max-h-64 overflow-y-auto">
-            {combos.length === 0 ? (
-              <p className="text-sm text-text-muted p-4">No combos configured yet.</p>
-            ) : combos.map((combo) => {
-              const checked = editingComboAccess?.comboAccessList?.includes(combo.name);
-              return (
+           <div className="border border-border rounded-lg max-h-64 overflow-y-auto">
+             {combos.length === 0 ? (
+               <p className="text-sm text-text-muted p-4">No active combos configured yet.</p>
+             ) : combos.map((combo) => {
+               const checked = editingComboAccess?.comboAccessList?.includes(combo.name);
+               return (
                 <label key={combo.id || combo.name} className="flex items-center justify-between gap-3 p-3 border-b border-border last:border-b-0 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5">
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{combo.name}</p>
@@ -1250,12 +1275,44 @@ export default function APIPageClient({ machineId }) {
                     type="checkbox"
                     checked={!!checked}
                     onChange={() => toggleComboAccessItem(combo.name)}
-                    className="shrink-0"
+                   className="shrink-0"
                   />
                 </label>
               );
-            })}
-          </div>
+             })}
+             {removedComboNames.length > 0 && (
+               <div className="border-t border-border">
+                 <div className="flex items-center justify-between gap-3 p-3 bg-surface-2">
+                   <div>
+                     <p className="text-sm font-medium">Removed combos</p>
+                     <p className="text-xs text-text-muted mt-1">These access entries point to combos that no longer exist.</p>
+                   </div>
+                   <button
+                     type="button"
+                     onClick={removeRemovedComboAccessItems}
+                     className="text-xs text-red-500 hover:text-red-600 whitespace-nowrap"
+                   >
+                     Remove all
+                   </button>
+                 </div>
+                 {removedComboNames.map((comboName) => (
+                   <div key={comboName} className="flex items-center justify-between gap-3 p-3 border-t border-border">
+                     <div className="min-w-0">
+                       <p className="text-sm font-medium truncate">{comboName}</p>
+                       <p className="text-xs text-text-muted">No longer exists</p>
+                     </div>
+                     <button
+                       type="button"
+                       onClick={() => removeComboAccessItem(comboName)}
+                       className="text-xs text-red-500 hover:text-red-600 whitespace-nowrap"
+                     >
+                       Remove
+                     </button>
+                   </div>
+                 ))}
+               </div>
+             )}
+           </div>
 
           <div className="flex gap-2">
             <Button onClick={handleSaveComboAccess} fullWidth>

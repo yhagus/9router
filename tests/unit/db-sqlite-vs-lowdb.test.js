@@ -149,6 +149,23 @@ describe("DB SQLite layer — public API parity", () => {
     expect(await sqliteDb.deleteCombo(c.id)).toBe(true);
   });
 
+  it("combos: deletion removes API-key access references", async () => {
+    const key = await sqliteDb.createApiKey("combo-access-key", "machine-combo-access");
+    const combo = await sqliteDb.createCombo({ name: "combo-to-remove", models: ["m1"] });
+    await sqliteDb.updateApiKey(key.id, {
+      comboAccessMode: "whitelist",
+      comboAccessList: ["combo-to-remove", "keep-this"],
+    });
+
+    expect(await sqliteDb.deleteCombo(combo.id)).toBe(true);
+    expect(await sqliteDb.getApiKeyById(key.id)).toMatchObject({
+      comboAccessMode: "whitelist",
+      comboAccessList: ["keep-this"],
+    });
+
+    await sqliteDb.deleteApiKey(key.id);
+  });
+
   it("modelAliases: KV ops", async () => {
     await sqliteDb.setModelAlias("alias1", "real-model-1");
     await sqliteDb.setModelAlias("alias2", "real-model-2");
