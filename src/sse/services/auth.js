@@ -9,6 +9,22 @@ import * as log from "../utils/logger.js";
 let selectionMutex = Promise.resolve();
 
 /**
+ * Sort connections by an explicit ID order (e.g. a combo's per-model custom
+ * account order), falling back to `priority` for any connection not listed.
+ * @param {Array} connections
+ * @param {string[]|null} orderIds
+ */
+export function sortConnectionsByOrder(connections, orderIds) {
+  if (!Array.isArray(orderIds) || orderIds.length === 0) return connections;
+  const orderIndex = new Map(orderIds.map((id, i) => [id, i]));
+  return [...connections].sort((a, b) => {
+    const ai = orderIndex.has(a.id) ? orderIndex.get(a.id) : Infinity;
+    const bi = orderIndex.has(b.id) ? orderIndex.get(b.id) : Infinity;
+    return ai !== bi ? ai - bi : (a.priority || 999) - (b.priority || 999);
+  });
+}
+
+/**
  * Get provider credentials from localDb
  * Filters out unavailable accounts and returns the selected account based on strategy
  * @param {string} provider - Provider name
@@ -24,6 +40,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   const allowedConnectionIds = Array.isArray(options?.allowedConnectionIds)
     ? new Set(options.allowedConnectionIds)
     : null;
+  const accountOrder = Array.isArray(options?.accountOrder) ? options.accountOrder : null;
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionMutex;
   let resolveMutex;
@@ -116,6 +133,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     if (connection) {
       // skip strategy
+    } else if (accountOrder?.length) {
+      // Combo-level custom account order overrides the provider's fallback/round-robin
+      // strategy — always try accounts in the exact order the user set.
+      connection = sortConnectionsByOrder(availableConnections, accountOrder)[0];
+      log.info("AUTH", `${provider} | custom order: picked ${connection?.id?.slice(0, 8)} (${connection?.name || connection?.email || "unnamed"})`);
     } else if (strategy === "round-robin") {
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 

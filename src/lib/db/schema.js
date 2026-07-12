@@ -93,6 +93,7 @@ export const TABLES = {
       kind: "TEXT",
       models: "TEXT NOT NULL",
       accountFilters: "TEXT DEFAULT '{}'",
+      useCustomAccountOrder: "INTEGER DEFAULT 0",
       createdAt: "TEXT NOT NULL",
       updatedAt: "TEXT NOT NULL",
     },

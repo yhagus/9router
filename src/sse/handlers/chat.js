@@ -106,7 +106,7 @@ export async function handleChat(request, clientRawRequest = null) {
             const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
             cleanRawReq = { ...clientRawRequest, body: cleanBody };
           }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, getComboAccountFilter(combo?.accountFilters, m), { skipModelGate: true });
+          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, buildComboAccountOptions(combo, m), { skipModelGate: true });
         },
         log,
         comboName: modelStr,
@@ -120,7 +120,7 @@ export async function handleChat(request, clientRawRequest = null) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, getComboAccountFilter(combo?.accountFilters, m), { skipModelGate: true }),
+      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, buildComboAccountOptions(combo, m), { skipModelGate: true }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -137,10 +137,19 @@ function getComboAccountFilter(accountFilters, modelStr) {
   return Array.isArray(accountFilters[modelStr]) ? accountFilters[modelStr] : [];
 }
 
+// Combo account selection for a given model: which accounts are allowed, and
+// (when the combo has custom ordering enabled) the fixed try-order among them.
+function buildComboAccountOptions(combo, modelStr) {
+  const filter = getComboAccountFilter(combo?.accountFilters, modelStr);
+  return { filter, accountOrder: combo?.useCustomAccountOrder ? filter : null };
+}
+
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, allowedConnectionIds = null, options = {}) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, accountOptions = null, options = {}) {
+  const allowedConnectionIds = accountOptions?.filter ?? null;
+  const accountOrder = accountOptions?.accountOrder ?? null;
   if (Array.isArray(allowedConnectionIds) && allowedConnectionIds.length === 0) {
     return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `No accounts allowed for combo model: ${modelStr}`);
   }
@@ -169,7 +178,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, getComboAccountFilter(combo.accountFilters, m), { skipModelGate: true });
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, buildComboAccountOptions(combo, m), { skipModelGate: true });
           },
           log,
           comboName: modelStr,
@@ -183,7 +192,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return handleComboChat({
         body,
         models: comboModels,
-        handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, getComboAccountFilter(combo.accountFilters, m), { skipModelGate: true }),
+        handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, buildComboAccountOptions(combo, m), { skipModelGate: true }),
         log,
         comboName: modelStr,
         comboStrategy,
@@ -217,7 +226,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { allowedConnectionIds });
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { allowedConnectionIds, accountOrder });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {

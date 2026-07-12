@@ -22,6 +22,7 @@ function rowToCombo(row) {
     kind: row.kind,
     models: parseJson(row.models, []),
     accountFilters: normalizeAccountFilters(parseJson(row.accountFilters, {})),
+    useCustomAccountOrder: !!row.useCustomAccountOrder,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -54,12 +55,13 @@ export async function createCombo(data) {
     kind: data.kind || null,
     models: data.models || [],
     accountFilters: normalizeAccountFilters(data.accountFilters),
+    useCustomAccountOrder: !!data.useCustomAccountOrder,
     createdAt: now,
     updatedAt: now,
   };
   db.run(
-    `INSERT INTO combos(id, name, kind, models, accountFilters, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-    [combo.id, combo.name, combo.kind, stringifyJson(combo.models), stringifyJson(combo.accountFilters), combo.createdAt, combo.updatedAt]
+    `INSERT INTO combos(id, name, kind, models, accountFilters, useCustomAccountOrder, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+    [combo.id, combo.name, combo.kind, stringifyJson(combo.models), stringifyJson(combo.accountFilters), combo.useCustomAccountOrder ? 1 : 0, combo.createdAt, combo.updatedAt]
   );
   return combo;
 }
@@ -72,9 +74,10 @@ export async function updateCombo(id, data) {
     if (!row) return;
     const merged = { ...rowToCombo(row), ...data, updatedAt: new Date().toISOString() };
     merged.accountFilters = normalizeAccountFilters(merged.accountFilters);
+    merged.useCustomAccountOrder = !!merged.useCustomAccountOrder;
     db.run(
-      `UPDATE combos SET name = ?, kind = ?, models = ?, accountFilters = ?, updatedAt = ? WHERE id = ?`,
-      [merged.name, merged.kind, stringifyJson(merged.models || []), stringifyJson(merged.accountFilters), merged.updatedAt, id]
+      `UPDATE combos SET name = ?, kind = ?, models = ?, accountFilters = ?, useCustomAccountOrder = ?, updatedAt = ? WHERE id = ?`,
+      [merged.name, merged.kind, stringifyJson(merged.models || []), stringifyJson(merged.accountFilters), merged.useCustomAccountOrder ? 1 : 0, merged.updatedAt, id]
     );
     result = merged;
   });

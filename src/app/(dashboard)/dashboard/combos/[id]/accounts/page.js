@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, notFound } from "next/navigation";
-import { Card, Button, CardSkeleton } from "@/shared/components";
+import { Card, Button, CardSkeleton, Toggle } from "@/shared/components";
 import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers";
 
 function parseModelEntry(entry) {
@@ -42,6 +42,7 @@ export default function ComboAccountsPage() {
   const [providerNodes, setProviderNodes] = useState([]);
   const [aliases, setAliases] = useState({});
   const [filters, setFilters] = useState({});
+  const [useCustomOrder, setUseCustomOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -69,6 +70,7 @@ export default function ComboAccountsPage() {
         if (!cancelled) {
           setCombo(comboData);
           setFilters(comboData.accountFilters || {});
+          setUseCustomOrder(!!comboData.useCustomAccountOrder);
           setConnections(providersData.connections || []);
           setProviderNodes(nodesData.nodes || []);
           setAliases(aliasesData.aliases || {});
@@ -105,6 +107,17 @@ export default function ComboAccountsPage() {
     });
   };
 
+  // Swap a selected account with its neighbor within the model's saved order.
+  const moveAccount = (modelEntry, index, direction) => {
+    setFilters((prev) => {
+      const list = [...(prev[modelEntry] || [])];
+      const target = index + direction;
+      if (target < 0 || target >= list.length) return prev;
+      [list[index], list[target]] = [list[target], list[index]];
+      return { ...prev, [modelEntry]: list };
+    });
+  };
+
   const save = async () => {
     if (!combo) return;
     setSaving(true);
@@ -112,7 +125,7 @@ export default function ComboAccountsPage() {
       const res = await fetch(`/api/combos/${combo.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accountFilters: filters }),
+        body: JSON.stringify({ accountFilters: filters, useCustomAccountOrder: useCustomOrder }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -122,6 +135,7 @@ export default function ComboAccountsPage() {
       const updated = await res.json();
       setCombo(updated);
       setFilters(updated.accountFilters || {});
+      setUseCustomOrder(!!updated.useCustomAccountOrder);
       router.push("/dashboard/combos");
     } catch (error) {
       console.log("Error saving account filters:", error);
@@ -163,6 +177,14 @@ export default function ComboAccountsPage() {
         <p className="text-sm text-text-muted">
           Pick which provider accounts each combo model may use. No saved filter means all active accounts. Unchecking all accounts skips that model during combo execution.
         </p>
+        <div className="mt-3 border-t border-border pt-3">
+          <Toggle
+            checked={useCustomOrder}
+            onChange={setUseCustomOrder}
+            label="Use custom account order"
+            description="When on, the checked order below (top to bottom) is the fixed try-order for each model's accounts, overriding account priority. When off, accounts are tried by priority as usual."
+          />
+        </div>
       </Card>
 
       {(combo.models || []).length === 0 ? (
@@ -183,6 +205,20 @@ export default function ComboAccountsPage() {
                 ? "Skipped"
                 : `${selected.length} selected`;
 
+            // When custom order is on and this model has an explicit selection,
+            // show selected accounts first in their saved order (reorderable),
+            // then the rest.
+            const showCustomOrder = useCustomOrder && hasFilter && selected.length > 0;
+            const orderedAccounts = showCustomOrder
+              ? [...accounts].sort((a, b) => {
+                  const ai = selected.indexOf(a.id);
+                  const bi = selected.indexOf(b.id);
+                  const aRank = ai === -1 ? Infinity : ai;
+                  const bRank = bi === -1 ? Infinity : bi;
+                  return aRank - bRank;
+                })
+              : accounts;
+
             return (
               <Card key={`${modelEntry}-${index}`} padding="sm">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -202,26 +238,59 @@ export default function ComboAccountsPage() {
                 </div>
 
                 <div className="mt-4 rounded-lg border border-border">
-                  {accounts.length === 0 ? (
+                  {orderedAccounts.length === 0 ? (
                     <div className="p-4 text-sm text-text-muted">
                       No active accounts for provider <code>{resolved.providerId}</code>.
                     </div>
-                  ) : accounts.map((conn) => (
-                    <label key={conn.id} className="flex cursor-pointer items-center justify-between gap-3 border-b border-border p-3 last:border-b-0 hover:bg-black/5 dark:hover:bg-white/5">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{getConnectionLabel(conn)}</p>
-                        <p className="truncate text-xs text-text-muted">
-                          {[getConnectionEmail(conn), `Priority ${conn.priority || "-"}`, conn.authType].filter(Boolean).join(" · ")}
-                        </p>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={selected.includes(conn.id)}
-                        onChange={() => toggleAccount(modelEntry, conn.id, allIds)}
-                        className="shrink-0"
-                      />
-                    </label>
-                  ))}
+                  ) : orderedAccounts.map((conn) => {
+                    const isChecked = selected.includes(conn.id);
+                    const orderPos = showCustomOrder && isChecked ? selected.indexOf(conn.id) : -1;
+                    return (
+                      <label key={conn.id} className="flex cursor-pointer items-center justify-between gap-3 border-b border-border p-3 last:border-b-0 hover:bg-black/5 dark:hover:bg-white/5">
+                        <div className="flex min-w-0 items-center gap-2">
+                          {orderPos !== -1 && (
+                            <span className="text-[10px] font-medium text-text-muted w-3 text-center shrink-0">{orderPos + 1}</span>
+                          )}
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">{getConnectionLabel(conn)}</p>
+                            <p className="truncate text-xs text-text-muted">
+                              {[getConnectionEmail(conn), `Priority ${conn.priority || "-"}`, conn.authType].filter(Boolean).join(" · ")}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {orderPos !== -1 && (
+                            <div className="flex items-center gap-0.5" onClick={(e) => e.preventDefault()}>
+                              <button
+                                type="button"
+                                onClick={() => moveAccount(modelEntry, orderPos, -1)}
+                                disabled={orderPos === 0}
+                                className={`p-0.5 rounded ${orderPos === 0 ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`}
+                                title="Move up"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">arrow_upward</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveAccount(modelEntry, orderPos, 1)}
+                                disabled={orderPos === selected.length - 1}
+                                className={`p-0.5 rounded ${orderPos === selected.length - 1 ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`}
+                                title="Move down"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">arrow_downward</span>
+                              </button>
+                            </div>
+                          )}
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleAccount(modelEntry, conn.id, allIds)}
+                            className="shrink-0"
+                          />
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
               </Card>
             );
