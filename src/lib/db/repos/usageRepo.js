@@ -84,12 +84,15 @@ function firstTokenNumber(...values) {
 
 function getUsageTokenCounts(tokens = {}, fallback = {}) {
   const source = tokens || {};
-  const cacheCreationTokens = firstTokenNumber(source.cache_creation_input_tokens, source.prompt_tokens_details?.cache_creation_tokens);
+  const cacheCreationTokens = firstTokenNumber(source.cache_creation_input_tokens, source.input_tokens_details?.cache_creation_tokens, source.prompt_tokens_details?.cache_creation_tokens);
   const explicitCachedTokens = Object.prototype.hasOwnProperty.call(source, "cached_tokens");
-  const hasOpenAIDetails = !explicitCachedTokens && Object.prototype.hasOwnProperty.call(source, "prompt_tokens_details");
+  const hasOpenAIDetails = !explicitCachedTokens && (
+    Object.prototype.hasOwnProperty.call(source, "input_tokens_details") ||
+    Object.prototype.hasOwnProperty.call(source, "prompt_tokens_details")
+  );
   const cachedTokens = explicitCachedTokens
     ? tokenNumber(source.cached_tokens)
-    : firstTokenNumber(source.cache_read_input_tokens, source.prompt_tokens_details?.cached_tokens);
+    : firstTokenNumber(source.cache_read_input_tokens, source.input_tokens_details?.cached_tokens, source.prompt_tokens_details?.cached_tokens);
   const basePromptTokens = firstTokenNumber(source.prompt_tokens, source.input_tokens, fallback.promptTokens);
   const promptTokens = explicitCachedTokens || hasOpenAIDetails
     ? basePromptTokens
@@ -254,8 +257,7 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
     lastErrorProvider.ts = Date.now();
   }
 
-  const t = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  console.log(`[${t}] [PENDING] ${started ? "START" : "END"}${error ? " (ERROR)" : ""} | provider=${provider} | model=${model}`);
+  // [PENDING] console line removed; lifecycle is visible via "▶" and "📊 done" lines
   scheduleStatsEvent("pending");
 }
 

@@ -4,6 +4,9 @@
 
 import { FORMATS } from "../translator/formats.js";
 
+// Legacy per-chunk usage console line; off by default (superseded by "📊 done")
+const DEBUG_USAGE = process.env.LOG_USAGE_VERBOSE === "1";
+
 // ANSI color codes
 export const COLORS = {
   reset: "\x1b[0m",
@@ -169,7 +172,11 @@ export function canonicalizeUsage(usage) {
 
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const completion = num(usage.completion_tokens ?? usage.output_tokens);
-  const reasoning = num(usage.reasoning_tokens);
+  const reasoning = num(
+    usage.reasoning_tokens ??
+    usage.output_tokens_details?.reasoning_tokens ??
+    usage.completion_tokens_details?.reasoning_tokens
+  );
   // Fall back to nested details shapes when the top-level field is absent, so
   // raw Responses/OpenAI-forwarding usage doesn't silently drop cache metadata.
   const cacheCreation = num(
@@ -414,6 +421,10 @@ export function estimateUsage(body, contentLength, targetFormat = FORMATS.OPENAI
  */
 export function logUsage(provider, usage, model = null, connectionId = null, apiKey = null) {
   if (!usage || typeof usage !== "object") return;
+
+  // Console output moved to the unified "📊 done" line (streamingHandler). Kept as
+  // a no-op hook so callers stay unchanged; usage persistence happens via saveUsageStats.
+  if (!DEBUG_USAGE) return;
 
   const p = provider?.toUpperCase() || "UNKNOWN";
 

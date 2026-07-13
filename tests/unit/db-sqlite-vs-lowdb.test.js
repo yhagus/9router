@@ -109,6 +109,19 @@ describe("DB SQLite layer — public API parity", () => {
     expect(back.providerSpecificData).toEqual({ foo: "bar" });
   });
 
+  it("providerConnections: GitHub OAuth uses account identity as fallback name", async () => {
+    const c = await sqliteDb.createProviderConnection({
+      provider: "github",
+      authType: "oauth",
+      accessToken: "tok",
+      providerSpecificData: { githubLogin: "octocat" },
+    });
+
+    expect(c.name).toBe("octocat");
+    const back = await sqliteDb.getProviderConnectionById(c.id);
+    expect(back.name).toBe("octocat");
+  });
+
   it("providerNodes: CRUD", async () => {
     const n = await sqliteDb.createProviderNode({ type: "openai", name: "Test", baseUrl: "https://api.test", apiType: "openai" });
     expect(n.id).toBeDefined();
@@ -136,16 +149,18 @@ describe("DB SQLite layer — public API parity", () => {
   });
 
   it("combos: CRUD", async () => {
-    const c = await sqliteDb.createCombo({ name: "combo1", models: ["m1", "m2"], kind: "fallback", accountFilters: { m1: ["acc1", "acc1", " "], m2: [] } });
+    const c = await sqliteDb.createCombo({ name: "combo1", models: ["m1", "m2"], kind: "fallback", accountFilters: { m1: ["acc1", "acc1", " "], m2: [] }, useCustomAccountOrder: true });
     expect(c.id).toBeDefined();
     expect(c.models).toEqual(["m1", "m2"]);
     expect(c.accountFilters).toEqual({ m1: ["acc1"], m2: [] });
+    expect(c.useCustomAccountOrder).toBe(true);
     const byName = await sqliteDb.getComboByName("combo1");
     expect(byName.id).toBe(c.id);
-    await sqliteDb.updateCombo(c.id, { models: ["m3"], accountFilters: { m3: ["acc3"] } });
+    await sqliteDb.updateCombo(c.id, { models: ["m3"], accountFilters: { m3: ["acc3"] }, useCustomAccountOrder: false });
     const updated = await sqliteDb.getComboById(c.id);
     expect(updated.models).toEqual(["m3"]);
     expect(updated.accountFilters).toEqual({ m3: ["acc3"] });
+    expect(updated.useCustomAccountOrder).toBe(false);
     expect(await sqliteDb.deleteCombo(c.id)).toBe(true);
   });
 
@@ -263,15 +278,27 @@ describe("DB SQLite layer — public API parity", () => {
     expect(Array.isArray(exported.providerConnections)).toBe(true);
     expect(typeof exported.modelAliases).toBe("object");
 
-    // Add marker, export, import a different payload, verify reset
+    // Add marker and fork-specific combo ordering, then verify both survive.
     await sqliteDb.setModelAlias("marker", "before");
+    const combo = await sqliteDb.createCombo({
+      name: "roundtrip-order",
+      models: ["m1"],
+      accountFilters: { m1: ["acc2", "acc1"] },
+      useCustomAccountOrder: true,
+    });
     const snap = await sqliteDb.exportDb();
 
     await sqliteDb.setModelAlias("marker", "after");
+    await sqliteDb.updateCombo(combo.id, { useCustomAccountOrder: false });
     expect((await sqliteDb.getModelAliases()).marker).toBe("after");
 
     await sqliteDb.importDb(snap);
     expect((await sqliteDb.getModelAliases()).marker).toBe("before");
+    expect(await sqliteDb.getComboById(combo.id)).toMatchObject({
+      accountFilters: { m1: ["acc2", "acc1"] },
+      useCustomAccountOrder: true,
+    });
+    await sqliteDb.deleteCombo(combo.id);
   });
 
   it("pricing: user pricing merged with constants", async () => {
