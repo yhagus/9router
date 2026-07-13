@@ -148,7 +148,7 @@ Default URLs:
       <b>🇺🇸 English</b><br/>
       <sub>9Router + Claude Code FREE Setup<br/>by <a href="https://www.youtube.com/@BuildAIWithHamid">Build AI With Hamid</a></sub>
     </td>
-    
+
   </tr>
   <tr>
   <td align="center" width="320">
@@ -172,7 +172,7 @@ Default URLs:
       <b>🇺🇸 English</b><br/>
       <sub>Claude CLI Free Setup with 9Router 🚀<br/>by <a href="https://www.youtube.com/@CodeVerseSoban">CodeVerse Soban</a></sub>
     </td>
-    
+
   </tr>
   <tr>
   <td align="center" width="320">
@@ -196,9 +196,9 @@ Default URLs:
       <b>🇮🇩 Indonesia</b><br/>
       <sub>Koding 24 Jam Anti Rate Limit! Hemat Token AI 65% | Tutorial Quick Setup 9Router 🚀<br/>by <a href="https://www.youtube.com/@krisswuh">Krisswuh</a></sub>
     </td>
-    
+
   </tr>
-  
+
   <tr>
   <td align="center" width="320">
       <a href="https://www.youtube.com/watch?v=TXGv4eofe1I">
