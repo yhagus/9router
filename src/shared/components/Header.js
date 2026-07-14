@@ -105,6 +105,13 @@ const getPageInfo = (pathname) => {
       icon: "data_usage",
       breadcrumbs: [],
     };
+  if (pathname.includes("/free-tracker"))
+    return {
+      title: "Free Tracker",
+      description: "Track shared free-model pool usage from InferHub",
+      icon: "loyalty",
+      breadcrumbs: [],
+    };
   if (pathname.includes("/mitm"))
     return {
       title: "MITM Proxy",

@@ -2,12 +2,36 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import PropTypes from "prop-types";
 import { APP_CONFIG } from "@/shared/constants/config";
 import ThemeToggle from "@/shared/components/ThemeToggle";
+import { cn } from "@/shared/utils/cn";
+
+const NAV = [
+  { href: "/client", label: "Dashboard", icon: "dashboard", exact: true },
+  { href: "/client/free-tracker", label: "Free Tracker", icon: "loyalty" },
+];
+
+function pageMeta(pathname) {
+  if (pathname?.startsWith("/client/free-tracker")) {
+    return {
+      title: "Free Tracker",
+      icon: "loyalty",
+      description: "Public free model pool status",
+    };
+  }
+  return {
+    title: "Dashboard",
+    icon: "dashboard",
+    description: null,
+  };
+}
 
 export default function ClientLayout({ children }) {
+  const pathname = usePathname();
   const [keyName, setKeyName] = useState("");
+  const meta = pageMeta(pathname);
 
   useEffect(() => {
     let cancelled = false;
@@ -24,6 +48,10 @@ export default function ClientLayout({ children }) {
     await fetch("/api/client/auth/logout", { method: "POST" }).catch(() => {});
     window.location.assign("/login/guest");
   };
+
+  const description =
+    meta.description ||
+    (keyName ? `Usage for ${keyName}` : "Your API key usage");
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-bg">
@@ -46,11 +74,34 @@ export default function ClientLayout({ children }) {
           </Link>
         </div>
 
-        <nav className="flex-1 px-4 py-2">
-          <Link href="/client" className="flex items-center gap-3 px-3 py-1 rounded-lg bg-primary/10 text-primary transition-all group">
-            <span className="material-symbols-outlined text-[18px] fill-1">dashboard</span>
-            <span className="text-[13px] font-medium">Dashboard</span>
-          </Link>
+        <nav className="flex-1 px-4 py-2 space-y-0.5">
+          {NAV.map((item) => {
+            const active = item.exact
+              ? pathname === item.href
+              : pathname === item.href || pathname?.startsWith(`${item.href}/`);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-1.5 rounded-lg transition-all group",
+                  active
+                    ? "bg-primary/10 text-primary"
+                    : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5 hover:text-text-main",
+                )}
+              >
+                <span
+                  className={cn(
+                    "material-symbols-outlined text-[18px]",
+                    active && "fill-1",
+                  )}
+                >
+                  {item.icon}
+                </span>
+                <span className="text-[13px] font-medium">{item.label}</span>
+              </Link>
+            );
+          })}
         </nav>
       </aside>
 
@@ -59,16 +110,23 @@ export default function ClientLayout({ children }) {
         <header className="shrink-0 flex items-center justify-between gap-3 px-4 lg:px-8 pt-3 pb-2 border-b border-border-subtle bg-surface/60 backdrop-blur-xl lg:bg-transparent lg:backdrop-blur-none z-20">
           <div>
             <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary text-xl lg:text-2xl">dashboard</span>
-              <h1 className="text-base lg:text-2xl font-semibold tracking-tight truncate">Dashboard</h1>
+              <span className="material-symbols-outlined text-primary text-xl lg:text-2xl">
+                {meta.icon}
+              </span>
+              <h1 className="text-base lg:text-2xl font-semibold tracking-tight truncate">
+                {meta.title}
+              </h1>
             </div>
             <p className="hidden lg:block text-sm text-text-muted truncate">
-              {keyName ? `Usage for ${keyName}` : "Your API key usage"}
+              {description}
             </p>
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            <button onClick={handleLogout} className="h-8 px-3 rounded-lg border border-border text-sm text-text-muted hover:text-text-main hover:bg-surface-2 transition-colors">
+            <button
+              onClick={handleLogout}
+              className="h-8 px-3 rounded-lg border border-border text-sm text-text-muted hover:text-text-main hover:bg-surface-2 transition-colors"
+            >
               Logout
             </button>
           </div>

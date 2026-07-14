@@ -46,6 +46,8 @@ const DEFAULT_SETTINGS = {
   pxpipeAutoInstall: true,
   pxpipeMinChars: 25000,
   pxpipeTimeoutMs: 15000,
+  // Free Tracker: sourceId -> boolean (missing/false = private to clients)
+  freeTrackerPublic: {},
 };
 
 async function readRaw() {
