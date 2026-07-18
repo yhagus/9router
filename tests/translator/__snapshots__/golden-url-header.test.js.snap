@@ -43,14 +43,12 @@ exports[`GOLDEN buildHeaders (default executor providers) > anthropic → header
   "apiKey": {
     "Accept": "text/event-stream",
     "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
-    "Anthropic-Version": "2023-06-01",
     "Content-Type": "application/json",
     "anthropic-version": "2023-06-01",
     "x-api-key": "<CRED>",
   },
   "nonStream": {
     "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
-    "Anthropic-Version": "2023-06-01",
     "Content-Type": "application/json",
     "anthropic-version": "2023-06-01",
     "x-api-key": "<CRED>",
@@ -58,7 +56,6 @@ exports[`GOLDEN buildHeaders (default executor providers) > anthropic → header
   "oauth": {
     "Accept": "text/event-stream",
     "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
-    "Anthropic-Version": "2023-06-01",
     "Content-Type": "application/json",
     "anthropic-version": "2023-06-01",
     "x-api-key": "<CRED>",
@@ -951,8 +948,8 @@ exports[`GOLDEN buildUrl (default executor providers) > alicode → url (stream 
 
 exports[`GOLDEN buildUrl (default executor providers) > alicode-intl → url (stream + non-stream) 1`] = `
 {
-  "nonStream": "https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions",
-  "stream": "https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions",
+  "nonStream": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+  "stream": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
 }
 `;
 
