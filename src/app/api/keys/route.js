@@ -1,12 +1,52 @@
 import { NextResponse } from "next/server";
-import { getApiKeys, createApiKey } from "@/lib/localDb";
+import { getApiKeys, listApiKeys, createApiKey } from "@/lib/localDb";
+import { getUsageTotalsByApiKeys } from "@/lib/usageDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 
 export const dynamic = "force-dynamic";
 
+const EMPTY_USAGE = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+function hasPaginationParams(searchParams) {
+  return searchParams.has("page") || searchParams.has("pageSize") || searchParams.has("search");
+}
+
+async function attachUsage(keys) {
+  const usageMap = await getUsageTotalsByApiKeys(keys.map((k) => k.key));
+  return keys.map((key) => ({
+    ...key,
+    usage: usageMap[key.key] || EMPTY_USAGE,
+  }));
+}
+
 // GET /api/keys - List API keys
-export async function GET() {
+// With page/pageSize/search → paginated response + per-key usage totals
+// Without those params → full list (backward compatible for dropdowns/CLI)
+export async function GET(request) {
   try {
+    const { searchParams } = new URL(request.url);
+
+    if (hasPaginationParams(searchParams)) {
+      const page = Number(searchParams.get("page")) || 1;
+      const pageSize = Number(searchParams.get("pageSize")) || 10;
+      const search = searchParams.get("search") || "";
+      const { keys, total, page: safePage, pageSize: safePageSize } = await listApiKeys({
+        search,
+        page,
+        pageSize,
+      });
+      const keysWithUsage = await attachUsage(keys);
+      return NextResponse.json({
+        keys: keysWithUsage,
+        pagination: {
+          page: safePage,
+          pageSize: safePageSize,
+          totalItems: total,
+          totalPages: Math.max(1, Math.ceil(total / safePageSize)),
+        },
+      });
+    }
+
     const keys = await getApiKeys();
     return NextResponse.json({ keys });
   } catch (error) {

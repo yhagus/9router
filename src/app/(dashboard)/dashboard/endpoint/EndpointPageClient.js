@@ -17,8 +17,22 @@ import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
+import ApiKeysList from "./components/ApiKeysList";
+
+const KEYS_PAGE_SIZE = 10;
+
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
+  const [keysPagination, setKeysPagination] = useState({
+    page: 1,
+    pageSize: KEYS_PAGE_SIZE,
+    totalItems: 0,
+    totalPages: 1,
+  });
+  const [keysPage, setKeysPage] = useState(1);
+  const [keysPageSize, setKeysPageSize] = useState(KEYS_PAGE_SIZE);
+  const [keysSearchInput, setKeysSearchInput] = useState("");
+  const [keysSearch, setKeysSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
@@ -256,16 +270,33 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const fetchKeys = useCallback(async (page = keysPage, pageSize = keysPageSize, search = keysSearch) => {
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      });
+      if (search.trim()) params.set("search", search.trim());
+      const res = await fetch(`/api/keys?${params}`);
+      const data = await res.json();
+      if (res.ok) {
+        setKeys(data.keys || []);
+        if (data.pagination) {
+          setKeysPagination(data.pagination);
+          if (data.pagination.page !== page) setKeysPage(data.pagination.page);
+        }
+      }
+    } catch (error) {
+      console.log("Error fetching keys:", error);
+    }
+  }, [keysPage, keysPageSize, keysSearch]);
+
   const fetchData = async () => {
     try {
-      const [keysRes, combosRes] = await Promise.all([
-        fetch("/api/keys"),
+      const [, combosRes] = await Promise.all([
+        fetchKeys(keysPage, keysPageSize, keysSearch),
         fetch("/api/combos"),
       ]);
-      const keysData = await keysRes.json();
-      if (keysRes.ok) {
-        setKeys(keysData.keys || []);
-      }
       if (combosRes.ok) {
         const combosData = await combosRes.json();
         setCombos(combosData.combos || []);
@@ -276,6 +307,22 @@ export default function APIPageClient({ machineId }) {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setKeysSearch((prev) => {
+        const next = keysSearchInput;
+        if (prev !== next) setKeysPage(1);
+        return next;
+      });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [keysSearchInput]);
+
+  useEffect(() => {
+    if (loading) return;
+    fetchKeys(keysPage, keysPageSize, keysSearch);
+  }, [keysPage, keysPageSize, keysSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // u2500u2500u2500 Cloudflare Tunnel handlers
   // Ping tunnel health until reachable. Race multiple URLs (shortlink + direct) — 1 OK is enough.
@@ -630,9 +677,12 @@ export default function APIPageClient({ machineId }) {
 
       if (res.ok) {
         setCreatedKey(data.key);
-        await fetchData();
         setNewKeyName("");
         setShowAddModal(false);
+        setKeysSearchInput("");
+        setKeysSearch("");
+        if (keysPage !== 1) setKeysPage(1);
+        else await fetchKeys(1, keysPageSize, "");
       }
     } catch (error) {
       console.log("Error creating key:", error);
@@ -648,12 +698,16 @@ export default function APIPageClient({ machineId }) {
         try {
           const res = await fetch(`/api/keys/${id}`, { method: "DELETE" });
           if (res.ok) {
-            setKeys(keys.filter((k) => k.id !== id));
             setVisibleKeys(prev => {
               const next = new Set(prev);
               next.delete(id);
               return next;
             });
+            const nextTotal = Math.max(0, (keysPagination.totalItems || 1) - 1);
+            const maxPage = Math.max(1, Math.ceil(nextTotal / keysPageSize));
+            const page = Math.min(keysPage, maxPage);
+            if (page !== keysPage) setKeysPage(page);
+            else await fetchKeys(page, keysPageSize, keysSearch);
           }
         } catch (error) {
           console.log("Error deleting key:", error);
@@ -689,7 +743,7 @@ export default function APIPageClient({ machineId }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setKeys(prev => prev.map(k => k.id === editingComboAccess.id ? data.key : k));
+        setKeys(prev => prev.map(k => k.id === editingComboAccess.id ? { ...k, ...data.key } : k));
         setEditingComboAccess(null);
       }
     } catch (error) {
@@ -714,7 +768,7 @@ export default function APIPageClient({ machineId }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setKeys(prev => prev.map(k => k.id === editingModelAccess.id ? data.key : k));
+        setKeys(prev => prev.map(k => k.id === editingModelAccess.id ? { ...k, ...data.key } : k));
         setEditingModelAccess(null);
       }
     } catch (error) {
@@ -763,10 +817,7 @@ export default function APIPageClient({ machineId }) {
     });
   };
 
-  const maskKey = (fullKey) => {
-    if (!fullKey || fullKey.length <= 10) return fullKey || "";
-    return fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4);
-  };
+
 
   const toggleKeyVisibility = (keyId) => {
     setVisibleKeys(prev => {
@@ -1058,10 +1109,12 @@ export default function APIPageClient({ machineId }) {
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <span className="material-symbols-outlined text-primary">vpn_key</span>
             API Keys
+            {keysPagination.totalItems > 0 && (
+              <span className="text-sm font-normal text-text-muted">
+                ({keysPagination.totalItems})
+              </span>
+            )}
           </h2>
-          <Button icon="add" onClick={() => setShowAddModal(true)}>
-            Create Key
-          </Button>
         </div>
 
         <div className="flex items-center justify-between pb-4 mb-4 border-b border-border">
@@ -1083,116 +1136,44 @@ export default function APIPageClient({ machineId }) {
           </div>
         )}
 
-        {keys.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
-              <span className="material-symbols-outlined text-[32px]">vpn_key</span>
-            </div>
-            <p className="text-text-main font-medium mb-1">No API keys yet</p>
-            <p className="text-sm text-text-muted mb-4">Create your first API key to get started</p>
-            <Button icon="add" onClick={() => setShowAddModal(true)}>
-              Create Key
-            </Button>
-          </div>
-        ) : (
-          <div className="flex flex-col">
-            {keys.map((key) => (
-              <div
-                key={key.id}
-                className={`group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{key.name}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <code className="text-xs text-text-muted font-mono">
-                      {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
-                    </code>
-                    <button
-                      onClick={() => toggleKeyVisibility(key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                      title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => copy(key.key, key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {copied === key.id ? "check" : "content_copy"}
-                      </span>
-                    </button>
-                  </div>
-                  <p className="text-xs text-text-muted mt-1">
-                    Created {new Date(key.createdAt).toLocaleDateString()}
-                  </p>
-                  <p className="text-xs text-text-muted mt-1">
-                    Combo access: {(key.comboAccessMode || "blacklist") === "whitelist" ? "Whitelist" : "Blacklist"}
-                    {Array.isArray(key.comboAccessList) && key.comboAccessList.length > 0 ? ` (${key.comboAccessList.length})` : " (empty)"}
-                  </p>
-                  <p className="text-xs text-text-muted mt-1">
-                    Model access: {(key.modelAccessMode || "whitelist") === "blacklist" ? "Blacklist" : "Whitelist"}
-                    {Array.isArray(key.modelAccessList) && key.modelAccessList.length > 0 ? ` (${key.modelAccessList.length})` : " (empty)"}
-                  </p>
-                  {key.isActive === false && (
-                    <p className="text-xs text-orange-500 mt-1">Paused</p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Toggle
-                    size="sm"
-                    checked={key.isActive ?? true}
-                    onChange={(checked) => {
-                      if (key.isActive && !checked) {
-                        setConfirmState({
-                          title: "Pause API Key",
-                          message: `Pause API key "${key.name}"?\n\nThis key will stop working immediately but can be resumed later.`,
-                          onConfirm: async () => {
-                            setConfirmState(null);
-                            handleToggleKey(key.id, checked);
-                          }
-                        });
-                      } else {
-                        handleToggleKey(key.id, checked);
-                      }
-                    }}
-                    title={key.isActive ? "Pause key" : "Resume key"}
-                  />
-                  <button
-                    onClick={() => setEditingComboAccess({
-                      ...key,
-                      comboAccessMode: key.comboAccessMode || "blacklist",
-                      comboAccessList: Array.isArray(key.comboAccessList) ? key.comboAccessList : [],
-                    })}
-                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                    title="Edit combo access"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">rule</span>
-                  </button>
-                  <button
-                    onClick={() => setEditingModelAccess({
-                      ...key,
-                      modelAccessMode: key.modelAccessMode || "whitelist",
-                      modelAccessList: Array.isArray(key.modelAccessList) ? key.modelAccessList : [],
-                    })}
-                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                    title="Edit model access"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">model_training</span>
-                  </button>
-                  <button
-                    onClick={() => handleDeleteKey(key.id)}
-                    className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <ApiKeysList
+          keys={keys}
+          pagination={keysPagination}
+          searchInput={keysSearchInput}
+          onSearchChange={setKeysSearchInput}
+          onPageChange={setKeysPage}
+          onPageSizeChange={(size) => {
+            setKeysPageSize(size);
+            setKeysPage(1);
+          }}
+          visibleKeys={visibleKeys}
+          onToggleVisibility={toggleKeyVisibility}
+          copied={copied}
+          onCopy={copy}
+          onCreate={() => setShowAddModal(true)}
+          onToggleKey={handleToggleKey}
+          onEditComboAccess={(key) => setEditingComboAccess({
+            ...key,
+            comboAccessMode: key.comboAccessMode || "blacklist",
+            comboAccessList: Array.isArray(key.comboAccessList) ? key.comboAccessList : [],
+          })}
+          onEditModelAccess={(key) => setEditingModelAccess({
+            ...key,
+            modelAccessMode: key.modelAccessMode || "whitelist",
+            modelAccessList: Array.isArray(key.modelAccessList) ? key.modelAccessList : [],
+          })}
+          onDeleteKey={handleDeleteKey}
+          onConfirmPause={(key, checked) => {
+            setConfirmState({
+              title: "Pause API Key",
+              message: `Pause API key "${key.name}"?\n\nThis key will stop working immediately but can be resumed later.`,
+              onConfirm: async () => {
+                setConfirmState(null);
+                handleToggleKey(key.id, checked);
+              }
+            });
+          }}
+        />
       </Card>
 
       {/* Add Key Modal */}

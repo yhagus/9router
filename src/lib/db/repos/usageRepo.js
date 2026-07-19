@@ -459,6 +459,51 @@ export async function getUsageStatsForApiKey(apiKey) {
   return stats;
 }
 
+/**
+ * Aggregate usage totals for a batch of API key strings.
+ * @param {string[]} apiKeys
+ * @returns {Promise<Record<string, { requests: number, promptTokens: number, completionTokens: number, totalTokens: number }>>}
+ */
+export async function getUsageTotalsByApiKeys(apiKeys) {
+  const result = {};
+  const keys = Array.isArray(apiKeys)
+    ? Array.from(new Set(apiKeys.filter((k) => typeof k === "string" && k)))
+    : [];
+  if (keys.length === 0) return result;
+
+  const db = await getAdapter();
+  const placeholders = keys.map(() => "?").join(", ");
+  const rows = db.all(
+    `SELECT apiKey,
+            COUNT(*) as requests,
+            COALESCE(SUM(promptTokens), 0) as promptTokens,
+            COALESCE(SUM(completionTokens), 0) as completionTokens
+     FROM usageHistory
+     WHERE apiKey IN (${placeholders})
+     GROUP BY apiKey`,
+    keys
+  );
+
+  for (const r of rows) {
+    const promptTokens = Number(r.promptTokens) || 0;
+    const completionTokens = Number(r.completionTokens) || 0;
+    result[r.apiKey] = {
+      requests: Number(r.requests) || 0,
+      promptTokens,
+      completionTokens,
+      totalTokens: promptTokens + completionTokens,
+    };
+  }
+
+  for (const key of keys) {
+    if (!result[key]) {
+      result[key] = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    }
+  }
+
+  return result;
+}
+
 function getPeriodStartIso(period) {
   if (period === "all") return null;
   if (period === "today") {

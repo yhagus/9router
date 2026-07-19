@@ -29,7 +29,7 @@ export {
 
 // API keys
 export {
-  getApiKeys, getApiKeyById, getApiKeyByKey, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  getApiKeys, listApiKeys, getApiKeyById, getApiKeyByKey, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
 } from "./repos/apiKeysRepo.js";
 
 // Combos
@@ -58,7 +58,7 @@ export {
 // Usage
 export {
   statsEmitter, trackPendingRequest, getActiveRequests,
-  saveRequestUsage, getUsageHistory, getUsageStats, getUsageStatsForApiKey, getChartData,
+  saveRequestUsage, getUsageHistory, getUsageStats, getUsageStatsForApiKey, getUsageTotalsByApiKeys, getChartData,
   appendRequestLog, getRecentLogs,
 } from "./repos/usageRepo.js";
 

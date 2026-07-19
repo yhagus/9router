@@ -42,6 +42,53 @@ export async function getApiKeys() {
   return rows.map(rowToKey);
 }
 
+/**
+ * Paginated API keys list with optional name search.
+ * @param {{ search?: string, page?: number, pageSize?: number }} opts
+ * @returns {Promise<{ keys: object[], total: number, page: number, pageSize: number }>}
+ */
+export async function listApiKeys({ search = "", page = 1, pageSize = 10 } = {}) {
+  const db = await getAdapter();
+  const safePageSize = Math.min(50, Math.max(1, Number(pageSize) || 10));
+  const q = String(search || "").trim().toLowerCase();
+
+  let total;
+  if (q) {
+    const countRow = db.get(
+      `SELECT COUNT(*) as count FROM apiKeys WHERE LOWER(name) LIKE ?`,
+      [`%${q}%`]
+    );
+    total = countRow?.count ?? 0;
+  } else {
+    const countRow = db.get(`SELECT COUNT(*) as count FROM apiKeys`);
+    total = countRow?.count ?? 0;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize));
+  const safePage = Math.min(Math.max(1, Number(page) || 1), totalPages);
+  const offset = (safePage - 1) * safePageSize;
+
+  let rows;
+  if (q) {
+    rows = db.all(
+      `SELECT * FROM apiKeys WHERE LOWER(name) LIKE ? ORDER BY createdAt DESC LIMIT ? OFFSET ?`,
+      [`%${q}%`, safePageSize, offset]
+    );
+  } else {
+    rows = db.all(
+      `SELECT * FROM apiKeys ORDER BY createdAt DESC LIMIT ? OFFSET ?`,
+      [safePageSize, offset]
+    );
+  }
+
+  return {
+    keys: rows.map(rowToKey),
+    total,
+    page: safePage,
+    pageSize: safePageSize,
+  };
+}
+
 export async function getApiKeyById(id) {
   const db = await getAdapter();
   const row = db.get(`SELECT * FROM apiKeys WHERE id = ?`, [id]);
