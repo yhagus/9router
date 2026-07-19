@@ -6,6 +6,7 @@ import { normalizeApiKeyVisibility, isApiKeyPublic } from "@/shared/utils/apiKey
 export { normalizeApiKeyVisibility, isApiKeyPublic };
 
 const COMBO_ACCESS_MODES = new Set(["blacklist", "whitelist"]);
+const LIMIT_MODES = new Set(["none", "requests", "tokens"]);
 
 function normalizeComboAccessMode(mode) {
   return COMBO_ACCESS_MODES.has(mode) ? mode : "blacklist";
@@ -23,11 +24,25 @@ function normalizeComboAccessList(list) {
 
 const normalizeModelAccessList = normalizeComboAccessList;
 
+export function normalizeLimitMode(mode) {
+  return LIMIT_MODES.has(mode) ? mode : "none";
+}
+
+export function normalizeLimitValue(mode, value) {
+  const m = normalizeLimitMode(mode);
+  if (m === "none") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
 function rowToKey(row) {
   if (!row) return null;
   const visibility = normalizeApiKeyVisibility(row.visibility);
   const isDefault =
     visibility === "public" && (row.isDefault === 1 || row.isDefault === true);
+  const limitMode = normalizeLimitMode(row.limitMode);
+  const limitValue = normalizeLimitValue(limitMode, row.limitValue);
   return {
     id: row.id,
     key: row.key,
@@ -40,6 +55,10 @@ function rowToKey(row) {
     modelAccessList: normalizeModelAccessList(parseJson(row.modelAccessList, [])),
     visibility,
     isDefault,
+    limitMode: limitValue == null ? "none" : limitMode,
+    limitValue,
+    usageRequests: Number(row.usageRequests) || 0,
+    usageTokens: Number(row.usageTokens) || 0,
     createdAt: row.createdAt,
   };
 }
@@ -132,13 +151,16 @@ export async function getDefaultPublicApiKey() {
   return rowToKey(row);
 }
 
-export async function createApiKey(name, machineId, { visibility, isDefault } = {}) {
+export async function createApiKey(name, machineId, { visibility, isDefault, limitMode, limitValue } = {}) {
   if (!machineId) throw new Error("machineId is required");
   const db = await getAdapter();
   const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
   const result = generateApiKeyWithMachine(machineId);
   const vis = normalizeApiKeyVisibility(visibility);
   const wantDefault = vis === "public" && isDefault === true;
+  const mode = normalizeLimitMode(limitMode);
+  const value = normalizeLimitValue(mode, limitValue);
+  const effectiveMode = value == null ? "none" : mode;
   const apiKey = {
     id: uuidv4(),
     name,
@@ -151,13 +173,17 @@ export async function createApiKey(name, machineId, { visibility, isDefault } = 
     modelAccessList: [],
     visibility: vis,
     isDefault: wantDefault,
+    limitMode: effectiveMode,
+    limitValue: value,
+    usageRequests: 0,
+    usageTokens: 0,
     createdAt: new Date().toISOString(),
   };
 
   db.transaction(() => {
     if (wantDefault) clearAllDefaults(db);
     db.run(
-      `INSERT INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, visibility, isDefault, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, visibility, isDefault, limitMode, limitValue, usageRequests, usageTokens, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         apiKey.id,
         apiKey.key,
@@ -170,6 +196,10 @@ export async function createApiKey(name, machineId, { visibility, isDefault } = 
         stringifyJson(apiKey.modelAccessList),
         apiKey.visibility,
         wantDefault ? 1 : 0,
+        apiKey.limitMode,
+        apiKey.limitValue,
+        0,
+        0,
         apiKey.createdAt,
       ]
     );
@@ -207,7 +237,12 @@ export async function updateApiKey(id, data) {
     if (!row) return;
     const existing = rowToKey(row);
     // visibility is set only at create time — never change via update
-    const { visibility: _ignored, isDefault: wantDefault, ...safeData } = data || {};
+    const {
+      visibility: _ignored,
+      isDefault: wantDefault,
+      resetUsage,
+      ...safeData
+    } = data || {};
     const merged = { ...existing, ...safeData, visibility: existing.visibility };
     merged.comboAccessMode = normalizeComboAccessMode(merged.comboAccessMode);
     merged.comboAccessList = normalizeComboAccessList(merged.comboAccessList);
@@ -225,8 +260,28 @@ export async function updateApiKey(id, data) {
       merged.isDefault = existing.isDefault;
     }
 
+    if (data && ("limitMode" in data || "limitValue" in data)) {
+      const mode = normalizeLimitMode(
+        data.limitMode !== undefined ? data.limitMode : existing.limitMode
+      );
+      const value = normalizeLimitValue(
+        mode,
+        data.limitValue !== undefined ? data.limitValue : existing.limitValue
+      );
+      merged.limitMode = value == null ? "none" : mode;
+      merged.limitValue = value;
+    }
+
+    if (resetUsage === true) {
+      merged.usageRequests = 0;
+      merged.usageTokens = 0;
+    } else {
+      merged.usageRequests = existing.usageRequests;
+      merged.usageTokens = existing.usageTokens;
+    }
+
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, comboAccessMode = ?, comboAccessList = ?, modelAccessMode = ?, modelAccessList = ?, isDefault = ? WHERE id = ?`,
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, comboAccessMode = ?, comboAccessList = ?, modelAccessMode = ?, modelAccessList = ?, isDefault = ?, limitMode = ?, limitValue = ?, usageRequests = ?, usageTokens = ? WHERE id = ?`,
       [
         merged.key,
         merged.name,
@@ -237,12 +292,26 @@ export async function updateApiKey(id, data) {
         merged.modelAccessMode,
         stringifyJson(merged.modelAccessList),
         merged.isDefault ? 1 : 0,
+        merged.limitMode,
+        merged.limitValue,
+        merged.usageRequests,
+        merged.usageTokens,
         id,
       ]
     );
     result = merged;
   });
   return result;
+}
+
+/** Increment lifetime counters for an API key string (used from saveRequestUsage). */
+export function incrementApiKeyUsageSync(db, apiKey, tokenDelta) {
+  if (!apiKey || typeof apiKey !== "string") return;
+  const tokens = Math.max(0, Number(tokenDelta) || 0);
+  db.run(
+    `UPDATE apiKeys SET usageRequests = COALESCE(usageRequests, 0) + 1, usageTokens = COALESCE(usageTokens, 0) + ? WHERE key = ?`,
+    [tokens, apiKey]
+  );
 }
 
 export async function deleteApiKey(id) {

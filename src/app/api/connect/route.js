@@ -8,7 +8,15 @@ export async function GET() {
   try {
     const key = await getDefaultPublicApiKey();
     const keys = key
-      ? [{ id: key.id, name: key.name, key: key.key }]
+      ? [{
+          id: key.id,
+          name: key.name,
+          key: key.key,
+          limitMode: key.limitMode || "none",
+          limitValue: key.limitValue ?? null,
+          usageRequests: key.usageRequests || 0,
+          usageTokens: key.usageTokens || 0,
+        }]
       : [];
 
     return NextResponse.json({

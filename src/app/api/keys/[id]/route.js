@@ -21,7 +21,17 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, isDefault } = body;
+    const {
+      isActive,
+      comboAccessMode,
+      comboAccessList,
+      modelAccessMode,
+      modelAccessList,
+      isDefault,
+      limitMode,
+      limitValue,
+      resetUsage,
+    } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -34,13 +44,15 @@ export async function PUT(request, { params }) {
         if (!updated) {
           return NextResponse.json({ error: "Key not found" }, { status: 404 });
         }
-        // Apply other fields if present in same request
         const extra = {};
         if (isActive !== undefined) extra.isActive = isActive;
         if (comboAccessMode !== undefined) extra.comboAccessMode = comboAccessMode;
         if (comboAccessList !== undefined) extra.comboAccessList = comboAccessList;
         if (modelAccessMode !== undefined) extra.modelAccessMode = modelAccessMode;
         if (modelAccessList !== undefined) extra.modelAccessList = modelAccessList;
+        if (limitMode !== undefined) extra.limitMode = limitMode;
+        if (limitValue !== undefined) extra.limitValue = limitValue;
+        if (resetUsage === true) extra.resetUsage = true;
         if (Object.keys(extra).length > 0) {
           const merged = await updateApiKey(id, extra);
           return NextResponse.json({ key: merged });
@@ -58,6 +70,9 @@ export async function PUT(request, { params }) {
     if (modelAccessMode !== undefined) updateData.modelAccessMode = modelAccessMode;
     if (modelAccessList !== undefined) updateData.modelAccessList = modelAccessList;
     if (isDefault === false) updateData.isDefault = false;
+    if (limitMode !== undefined) updateData.limitMode = limitMode;
+    if (limitValue !== undefined) updateData.limitValue = limitValue;
+    if (resetUsage === true) updateData.resetUsage = true;
 
     const updated = await updateApiKey(id, updateData);
 

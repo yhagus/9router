@@ -75,6 +75,31 @@ function runVersionedMigrations(adapter) {
   return { applied: pending.length, from: current, to: lastApplied };
 }
 
+// Backfill usageRequests/usageTokens on apiKeys from usageHistory (once).
+function backfillApiKeyUsageCounters(adapter) {
+  try {
+    const cols = adapter.all(`PRAGMA table_info(apiKeys)`);
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has("usageRequests") || !names.has("usageTokens")) return;
+    if (getMetaSync(adapter, "apiKeyUsageBackfilled", null) === "1") return;
+
+    adapter.exec(`
+      UPDATE apiKeys SET
+        usageRequests = COALESCE((
+          SELECT COUNT(*) FROM usageHistory WHERE usageHistory.apiKey = apiKeys.key
+        ), 0),
+        usageTokens = COALESCE((
+          SELECT COALESCE(SUM(COALESCE(promptTokens, 0) + COALESCE(completionTokens, 0)), 0)
+          FROM usageHistory WHERE usageHistory.apiKey = apiKeys.key
+        ), 0)
+    `);
+    setMetaSync(adapter, "apiKeyUsageBackfilled", "1");
+    console.log("[DB][sync] backfilled apiKeys.usageRequests/usageTokens");
+  } catch (e) {
+    console.warn(`[DB][sync] apiKey usage backfill failed: ${e.message}`);
+  }
+}
+
 // ─── Auto-sync (additive only): add missing tables/columns/indexes ───────
 function syncSchemaFromTables(adapter) {
   for (const [tableName, def] of Object.entries(TABLES)) {
@@ -142,9 +167,11 @@ function importLegacyMain(adapter, data) {
 
   importWithAssertion(adapter, "apiKeys", data.apiKeys || [], (k) => {
     const isPublic = k.visibility === "public";
+    const limitMode = k.limitMode === "requests" || k.limitMode === "tokens" ? k.limitMode : "none";
+    const limitValue = limitMode === "none" ? null : (Number(k.limitValue) > 0 ? Math.floor(Number(k.limitValue)) : null);
     adapter.run(
-      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, visibility, isDefault, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.comboAccessMode === "whitelist" ? "whitelist" : "blacklist", stringifyJson(Array.isArray(k.comboAccessList) ? k.comboAccessList : []), k.modelAccessMode === "blacklist" ? "blacklist" : "whitelist", stringifyJson(Array.isArray(k.modelAccessList) ? k.modelAccessList : []), isPublic ? "public" : "private", isPublic && k.isDefault ? 1 : 0, k.createdAt || new Date().toISOString()]
+      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, visibility, isDefault, limitMode, limitValue, usageRequests, usageTokens, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.comboAccessMode === "whitelist" ? "whitelist" : "blacklist", stringifyJson(Array.isArray(k.comboAccessList) ? k.comboAccessList : []), k.modelAccessMode === "blacklist" ? "blacklist" : "whitelist", stringifyJson(Array.isArray(k.modelAccessList) ? k.modelAccessList : []), isPublic ? "public" : "private", isPublic && k.isDefault ? 1 : 0, limitValue == null ? "none" : limitMode, limitValue, Number(k.usageRequests) || 0, Number(k.usageTokens) || 0, k.createdAt || new Date().toISOString()]
     );
   }, (k) => ({ id: k.id ?? null, name: k.name ?? null }));
 
@@ -249,6 +276,9 @@ export async function runMigrationOnce(adapter) {
 
   // 2. Additive sync (auto add missing columns/indexes declared in TABLES)
   syncSchemaFromTables(adapter);
+
+  // 2b. One-time backfill of denormalized API key lifetime counters
+  backfillApiKeyUsageCounters(adapter);
 
   // Stamp the schema version we just reached so future boots skip re-backup.
   setMetaSync(adapter, "backupSchemaVersion", SCHEMA_VERSION);

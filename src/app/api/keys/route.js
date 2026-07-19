@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getApiKeys, listApiKeys, createApiKey } from "@/lib/localDb";
-import { normalizeApiKeyVisibility } from "@/shared/utils/apiKeyVisibility";
+import { normalizeApiKeyVisibility, normalizeLimitMode, normalizeLimitValue } from "@/lib/localDb";
 import { getUsageTotalsByApiKeys } from "@/lib/usageDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 
@@ -65,7 +65,7 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, visibility, isDefault } = body;
+    const { name, visibility, isDefault, limitMode, limitValue } = body;
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -74,9 +74,13 @@ export async function POST(request) {
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
     const vis = normalizeApiKeyVisibility(visibility);
+    const mode = normalizeLimitMode(limitMode);
+    const value = normalizeLimitValue(mode, limitValue);
     const apiKey = await createApiKey(name, machineId, {
       visibility: vis,
       isDefault: vis === "public" && isDefault === true,
+      limitMode: mode,
+      limitValue: value,
     });
 
     return NextResponse.json({
@@ -86,6 +90,10 @@ export async function POST(request) {
       machineId: apiKey.machineId,
       visibility: apiKey.visibility,
       isDefault: apiKey.isDefault === true,
+      limitMode: apiKey.limitMode,
+      limitValue: apiKey.limitValue,
+      usageRequests: apiKey.usageRequests,
+      usageTokens: apiKey.usageTokens,
     }, { status: 201 });
   } catch (error) {
     console.log("Error creating key:", error);

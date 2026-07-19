@@ -20,7 +20,15 @@ function maskKey(fullKey) {
   return fullKey.slice(0, 6) + "•".repeat(Math.min(8, fullKey.length - 10)) + fullKey.slice(-4);
 }
 
-function KeyActionsMenu({ keyItem, onEditComboAccess, onEditModelAccess, onSetDefault, onDeleteKey }) {
+function KeyActionsMenu({
+  keyItem,
+  onEditComboAccess,
+  onEditModelAccess,
+  onSetDefault,
+  onEditLimit,
+  onResetUsage,
+  onDeleteKey,
+}) {
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
   const buttonRef = useRef(null);
@@ -29,12 +37,13 @@ function KeyActionsMenu({ keyItem, onEditComboAccess, onEditModelAccess, onSetDe
     typeof onSetDefault === "function" &&
     keyItem?.visibility === "public" &&
     keyItem?.isDefault !== true;
+  const hasLimit = keyItem?.limitMode && keyItem.limitMode !== "none" && keyItem.limitValue > 0;
 
   const updatePosition = useCallback(() => {
     const btn = buttonRef.current;
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
-    const menuHeight = menuRef.current?.offsetHeight || 160;
+    const menuHeight = menuRef.current?.offsetHeight || 220;
     const spaceBelow = window.innerHeight - rect.bottom;
     const openUp = spaceBelow < menuHeight + MENU_GAP && rect.top > spaceBelow;
     const top = openUp
@@ -119,6 +128,28 @@ function KeyActionsMenu({ keyItem, onEditComboAccess, onEditModelAccess, onSetDe
               Set as default
             </button>
           )}
+          {typeof onEditLimit === "function" && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => run(() => onEditLimit(keyItem))}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 text-left"
+            >
+              <span className="material-symbols-outlined text-[16px] text-text-muted">speed</span>
+              Usage limit
+            </button>
+          )}
+          {typeof onResetUsage === "function" && hasLimit && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => run(() => onResetUsage(keyItem))}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 text-left"
+            >
+              <span className="material-symbols-outlined text-[16px] text-text-muted">restart_alt</span>
+              Reset usage
+            </button>
+          )}
           <div className="my-1 border-t border-black/5 dark:border-white/5" />
           <button
             type="button"
@@ -170,6 +201,8 @@ export default function ApiKeysList({
   onEditComboAccess,
   onEditModelAccess,
   onSetDefault,
+  onEditLimit,
+  onResetUsage,
   onDeleteKey,
   onConfirmPause,
 }) {
@@ -285,6 +318,25 @@ export default function ApiKeysList({
                           C:{comboMode}{comboCount ? `(${comboCount})` : ""}
                           {" / "}
                           M:{modelMode}{modelCount ? `(${modelCount})` : ""}
+                          {key.limitMode && key.limitMode !== "none" && key.limitValue > 0 && (
+                            <>
+                              {" · "}
+                              <span
+                                className={
+                                  (key.limitMode === "tokens"
+                                    ? (key.usageTokens || 0)
+                                    : (key.usageRequests || 0)) >= key.limitValue
+                                    ? "text-red-500"
+                                    : ""
+                                }
+                              >
+                                Limit:{" "}
+                                {key.limitMode === "tokens"
+                                  ? `${formatCompact(key.usageTokens || 0)}/${formatCompact(key.limitValue)} tok`
+                                  : `${formatCompact(key.usageRequests || 0)}/${formatCompact(key.limitValue)} req`}
+                              </span>
+                            </>
+                          )}
                         </p>
                       </td>
                       <td className="py-2 px-2 align-middle">
@@ -346,6 +398,8 @@ export default function ApiKeysList({
                             onEditComboAccess={onEditComboAccess}
                             onEditModelAccess={onEditModelAccess}
                             onSetDefault={onSetDefault}
+                            onEditLimit={onEditLimit}
+                            onResetUsage={onResetUsage}
                             onDeleteKey={onDeleteKey}
                           />
                         </div>

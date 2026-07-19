@@ -383,6 +383,14 @@ export async function saveRequestUsage(entry) {
       const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
       const next = (cur ? parseInt(cur.value, 10) : 0) + 1;
       db.run(`INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [String(next)]);
+
+      // Lifetime per-key counters for usage limits (O(1) gate checks)
+      if (entry.apiKey && typeof entry.apiKey === "string") {
+        db.run(
+          `UPDATE apiKeys SET usageRequests = COALESCE(usageRequests, 0) + 1, usageTokens = COALESCE(usageTokens, 0) + ? WHERE key = ?`,
+          [promptTokens + completionTokens, entry.apiKey]
+        );
+      }
       inserted = true;
     });
 

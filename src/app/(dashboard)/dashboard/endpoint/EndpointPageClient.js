@@ -39,6 +39,9 @@ export default function APIPageClient({ machineId }) {
   const [newKeyName, setNewKeyName] = useState("");
   const [newKeyVisibility, setNewKeyVisibility] = useState("private");
   const [newKeyIsDefault, setNewKeyIsDefault] = useState(false);
+  const [newKeyLimitMode, setNewKeyLimitMode] = useState("none");
+  const [newKeyLimitValue, setNewKeyLimitValue] = useState("");
+  const [editingLimit, setEditingLimit] = useState(null);
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
   const [combos, setCombos] = useState([]);
@@ -673,6 +676,8 @@ export default function APIPageClient({ machineId }) {
 
     try {
       const visibility = newKeyVisibility === "public" ? "public" : "private";
+      const limitMode = newKeyLimitMode === "requests" || newKeyLimitMode === "tokens" ? newKeyLimitMode : "none";
+      const limitValue = limitMode === "none" ? null : Number(newKeyLimitValue);
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -680,6 +685,8 @@ export default function APIPageClient({ machineId }) {
           name: newKeyName,
           visibility,
           isDefault: visibility === "public" && newKeyIsDefault,
+          limitMode,
+          limitValue: limitMode === "none" ? null : limitValue,
         }),
       });
       const data = await res.json();
@@ -689,6 +696,8 @@ export default function APIPageClient({ machineId }) {
         setNewKeyName("");
         setNewKeyVisibility("private");
         setNewKeyIsDefault(false);
+        setNewKeyLimitMode("none");
+        setNewKeyLimitValue("");
         setShowAddModal(false);
         setKeysSearchInput("");
         setKeysSearch("");
@@ -719,6 +728,52 @@ export default function APIPageClient({ machineId }) {
     } catch (error) {
       console.log("Error setting default key:", error);
     }
+  };
+
+  const handleSaveLimit = async () => {
+    if (!editingLimit?.id) return;
+    const limitMode =
+      editingLimit.limitMode === "requests" || editingLimit.limitMode === "tokens"
+        ? editingLimit.limitMode
+        : "none";
+    const limitValue = limitMode === "none" ? null : Number(editingLimit.limitValue);
+    try {
+      const res = await fetch(`/api/keys/${editingLimit.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limitMode, limitValue }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setKeys((prev) => prev.map((k) => (k.id === editingLimit.id ? { ...k, ...data.key } : k)));
+        setEditingLimit(null);
+      }
+    } catch (error) {
+      console.log("Error updating usage limit:", error);
+    }
+  };
+
+  const handleResetUsage = (key) => {
+    setConfirmState({
+      title: "Reset usage counters",
+      message: `Reset lifetime usage counters for "${key.name}"?\n\nThis only clears the limit counters (not usage history).`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        try {
+          const res = await fetch(`/api/keys/${key.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ resetUsage: true }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setKeys((prev) => prev.map((k) => (k.id === key.id ? { ...k, ...data.key } : k)));
+          }
+        } catch (error) {
+          console.log("Error resetting usage:", error);
+        }
+      },
+    });
   };
 
   const handleDeleteKey = async (id) => {
@@ -1190,6 +1245,8 @@ export default function APIPageClient({ machineId }) {
           onCreate={() => {
             setNewKeyVisibility(keysVisibilityTab === "public" ? "public" : "private");
             setNewKeyIsDefault(false);
+            setNewKeyLimitMode("none");
+            setNewKeyLimitValue("");
             setShowAddModal(true);
           }}
           onToggleKey={handleToggleKey}
@@ -1204,6 +1261,15 @@ export default function APIPageClient({ machineId }) {
             modelAccessList: Array.isArray(key.modelAccessList) ? key.modelAccessList : [],
           })}
           onSetDefault={handleSetDefaultKey}
+          onEditLimit={(key) => setEditingLimit({
+            id: key.id,
+            name: key.name,
+            limitMode: key.limitMode && key.limitMode !== "none" ? key.limitMode : "none",
+            limitValue: key.limitValue != null ? String(key.limitValue) : "",
+            usageRequests: key.usageRequests || 0,
+            usageTokens: key.usageTokens || 0,
+          })}
+          onResetUsage={handleResetUsage}
           onDeleteKey={handleDeleteKey}
           onConfirmPause={(key, checked) => {
             setConfirmState({
@@ -1227,6 +1293,8 @@ export default function APIPageClient({ machineId }) {
           setNewKeyName("");
           setNewKeyVisibility("private");
           setNewKeyIsDefault(false);
+          setNewKeyLimitMode("none");
+          setNewKeyLimitValue("");
         }}
       >
         <div className="flex flex-col gap-4">
@@ -1273,8 +1341,44 @@ export default function APIPageClient({ machineId }) {
               </span>
             </label>
           )}
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">Lifetime usage limit</label>
+            <SegmentedControl
+              size="sm"
+              value={newKeyLimitMode}
+              onChange={(v) => {
+                setNewKeyLimitMode(v);
+                if (v === "none") setNewKeyLimitValue("");
+              }}
+              options={[
+                { value: "none", label: "None" },
+                { value: "requests", label: "Requests" },
+                { value: "tokens", label: "Tokens" },
+              ]}
+            />
+            {newKeyLimitMode !== "none" && (
+              <Input
+                type="number"
+                min={1}
+                label={newKeyLimitMode === "tokens" ? "Max tokens" : "Max requests"}
+                value={newKeyLimitValue}
+                onChange={(e) => setNewKeyLimitValue(e.target.value)}
+                placeholder={newKeyLimitMode === "tokens" ? "100000" : "1000"}
+              />
+            )}
+            <p className="text-xs text-text-muted">
+              Lifetime cap. Requests over the limit return 429 until counters are reset.
+            </p>
+          </div>
           <div className="flex gap-2">
-            <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
+            <Button
+              onClick={handleCreateKey}
+              fullWidth
+              disabled={
+                !newKeyName.trim() ||
+                (newKeyLimitMode !== "none" && !(Number(newKeyLimitValue) > 0))
+              }
+            >
               Create
             </Button>
             <Button
@@ -1283,10 +1387,75 @@ export default function APIPageClient({ machineId }) {
                 setNewKeyName("");
                 setNewKeyVisibility("private");
                 setNewKeyIsDefault(false);
+                setNewKeyLimitMode("none");
+                setNewKeyLimitValue("");
               }}
               variant="ghost"
               fullWidth
             >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Usage Limit Modal */}
+      <Modal
+        isOpen={!!editingLimit}
+        title="Usage limit"
+        onClose={() => setEditingLimit(null)}
+      >
+        <div className="flex flex-col gap-4">
+          <div>
+            <p className="text-sm font-medium mb-1">{editingLimit?.name}</p>
+            <p className="text-xs text-text-muted">
+              Lifetime counters: {editingLimit?.usageRequests ?? 0} requests ·{" "}
+              {(editingLimit?.usageTokens ?? 0).toLocaleString()} tokens
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">Limit mode</label>
+            <SegmentedControl
+              size="sm"
+              value={editingLimit?.limitMode || "none"}
+              onChange={(v) =>
+                setEditingLimit((prev) =>
+                  prev
+                    ? { ...prev, limitMode: v, limitValue: v === "none" ? "" : prev.limitValue }
+                    : prev
+                )
+              }
+              options={[
+                { value: "none", label: "None" },
+                { value: "requests", label: "Requests" },
+                { value: "tokens", label: "Tokens" },
+              ]}
+            />
+          </div>
+          {editingLimit?.limitMode && editingLimit.limitMode !== "none" && (
+            <Input
+              type="number"
+              min={1}
+              label={editingLimit.limitMode === "tokens" ? "Max tokens" : "Max requests"}
+              value={editingLimit.limitValue}
+              onChange={(e) =>
+                setEditingLimit((prev) => (prev ? { ...prev, limitValue: e.target.value } : prev))
+              }
+              placeholder={editingLimit.limitMode === "tokens" ? "100000" : "1000"}
+            />
+          )}
+          <div className="flex gap-2">
+            <Button
+              onClick={handleSaveLimit}
+              fullWidth
+              disabled={
+                editingLimit?.limitMode !== "none" &&
+                !(Number(editingLimit?.limitValue) > 0)
+              }
+            >
+              Save
+            </Button>
+            <Button onClick={() => setEditingLimit(null)} variant="ghost" fullWidth>
               Cancel
             </Button>
           </div>
