@@ -65,7 +65,7 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, visibility } = body;
+    const { name, visibility, isDefault } = body;
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -73,8 +73,10 @@ export async function POST(request) {
 
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
+    const vis = normalizeApiKeyVisibility(visibility);
     const apiKey = await createApiKey(name, machineId, {
-      visibility: normalizeApiKeyVisibility(visibility),
+      visibility: vis,
+      isDefault: vis === "public" && isDefault === true,
     });
 
     return NextResponse.json({
@@ -83,6 +85,7 @@ export async function POST(request) {
       id: apiKey.id,
       machineId: apiKey.machineId,
       visibility: apiKey.visibility,
+      isDefault: apiKey.isDefault === true,
     }, { status: 201 });
   } catch (error) {
     console.log("Error creating key:", error);

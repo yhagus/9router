@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
+import { deleteApiKey, getApiKeyById, setApiKeyDefault, updateApiKey } from "@/lib/localDb";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -21,11 +21,34 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList } = body;
+    const { isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, isDefault } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
+    }
+
+    if (isDefault === true) {
+      try {
+        const updated = await setApiKeyDefault(id);
+        if (!updated) {
+          return NextResponse.json({ error: "Key not found" }, { status: 404 });
+        }
+        // Apply other fields if present in same request
+        const extra = {};
+        if (isActive !== undefined) extra.isActive = isActive;
+        if (comboAccessMode !== undefined) extra.comboAccessMode = comboAccessMode;
+        if (comboAccessList !== undefined) extra.comboAccessList = comboAccessList;
+        if (modelAccessMode !== undefined) extra.modelAccessMode = modelAccessMode;
+        if (modelAccessList !== undefined) extra.modelAccessList = modelAccessList;
+        if (Object.keys(extra).length > 0) {
+          const merged = await updateApiKey(id, extra);
+          return NextResponse.json({ key: merged });
+        }
+        return NextResponse.json({ key: updated });
+      } catch (e) {
+        return NextResponse.json({ error: e.message || "Failed to set default" }, { status: 400 });
+      }
     }
 
     const updateData = {};
@@ -34,6 +57,7 @@ export async function PUT(request, { params }) {
     if (comboAccessList !== undefined) updateData.comboAccessList = comboAccessList;
     if (modelAccessMode !== undefined) updateData.modelAccessMode = modelAccessMode;
     if (modelAccessList !== undefined) updateData.modelAccessList = modelAccessList;
+    if (isDefault === false) updateData.isDefault = false;
 
     const updated = await updateApiKey(id, updateData);
 

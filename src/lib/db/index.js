@@ -29,7 +29,8 @@ export {
 
 // API keys
 export {
-  getApiKeys, listApiKeys, getApiKeyById, getApiKeyByKey, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  getApiKeys, listApiKeys, getApiKeyById, getApiKeyByKey, getDefaultPublicApiKey,
+  createApiKey, updateApiKey, setApiKeyDefault, deleteApiKey, validateApiKey,
   normalizeApiKeyVisibility, isApiKeyPublic,
 } from "./repos/apiKeysRepo.js";
 
@@ -78,7 +79,7 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, comboAccessMode: r.comboAccessMode || "blacklist", comboAccessList: parseJson(r.comboAccessList, []), modelAccessMode: r.modelAccessMode || "whitelist", modelAccessList: parseJson(r.modelAccessList, []), visibility: r.visibility === "public" ? "public" : "private", createdAt: r.createdAt })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, comboAccessMode: r.comboAccessMode || "blacklist", comboAccessList: parseJson(r.comboAccessList, []), modelAccessMode: r.modelAccessMode || "whitelist", modelAccessList: parseJson(r.modelAccessList, []), visibility: r.visibility === "public" ? "public" : "private", isDefault: r.visibility === "public" && (r.isDefault === 1 || r.isDefault === true), createdAt: r.createdAt })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), accountFilters: parseJson(r.accountFilters, {}), useCustomAccountOrder: r.useCustomAccountOrder === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
@@ -137,9 +138,10 @@ export async function importDb(payload) {
       );
     }
     for (const k of payload.apiKeys || []) {
+      const isPublic = k.visibility === "public";
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, visibility, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.comboAccessMode === "whitelist" ? "whitelist" : "blacklist", stringifyJson(Array.isArray(k.comboAccessList) ? k.comboAccessList : []), k.modelAccessMode === "blacklist" ? "blacklist" : "whitelist", stringifyJson(Array.isArray(k.modelAccessList) ? k.modelAccessList : []), k.visibility === "public" ? "public" : "private", k.createdAt || new Date().toISOString()]
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, visibility, isDefault, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.comboAccessMode === "whitelist" ? "whitelist" : "blacklist", stringifyJson(Array.isArray(k.comboAccessList) ? k.comboAccessList : []), k.modelAccessMode === "blacklist" ? "blacklist" : "whitelist", stringifyJson(Array.isArray(k.modelAccessList) ? k.modelAccessList : []), isPublic ? "public" : "private", isPublic && k.isDefault ? 1 : 0, k.createdAt || new Date().toISOString()]
       );
     }
     for (const c of payload.combos || []) {

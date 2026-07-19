@@ -25,6 +25,9 @@ const normalizeModelAccessList = normalizeComboAccessList;
 
 function rowToKey(row) {
   if (!row) return null;
+  const visibility = normalizeApiKeyVisibility(row.visibility);
+  const isDefault =
+    visibility === "public" && (row.isDefault === 1 || row.isDefault === true);
   return {
     id: row.id,
     key: row.key,
@@ -35,7 +38,8 @@ function rowToKey(row) {
     comboAccessList: normalizeComboAccessList(parseJson(row.comboAccessList, [])),
     modelAccessMode: normalizeModelAccessMode(row.modelAccessMode),
     modelAccessList: normalizeModelAccessList(parseJson(row.modelAccessList, [])),
-    visibility: normalizeApiKeyVisibility(row.visibility),
+    visibility,
+    isDefault,
     createdAt: row.createdAt,
   };
 }
@@ -50,6 +54,10 @@ function visibilityWhere(visibility) {
     clause: `(visibility IS NULL OR visibility = '' OR visibility != 'public')`,
     params: [],
   };
+}
+
+function clearAllDefaults(db) {
+  db.run(`UPDATE apiKeys SET isDefault = 0 WHERE isDefault = 1`);
 }
 
 export async function getApiKeys() {
@@ -115,11 +123,22 @@ export async function getApiKeyByKey(key) {
   return rowToKey(row);
 }
 
-export async function createApiKey(name, machineId, { visibility } = {}) {
+/** Active public key marked as default (for /connect). */
+export async function getDefaultPublicApiKey() {
+  const db = await getAdapter();
+  const row = db.get(
+    `SELECT * FROM apiKeys WHERE visibility = 'public' AND isDefault = 1 AND isActive = 1 LIMIT 1`
+  );
+  return rowToKey(row);
+}
+
+export async function createApiKey(name, machineId, { visibility, isDefault } = {}) {
   if (!machineId) throw new Error("machineId is required");
   const db = await getAdapter();
   const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
   const result = generateApiKeyWithMachine(machineId);
+  const vis = normalizeApiKeyVisibility(visibility);
+  const wantDefault = vis === "public" && isDefault === true;
   const apiKey = {
     id: uuidv4(),
     name,
@@ -130,14 +149,54 @@ export async function createApiKey(name, machineId, { visibility } = {}) {
     comboAccessList: [],
     modelAccessMode: "whitelist",
     modelAccessList: [],
-    visibility: normalizeApiKeyVisibility(visibility),
+    visibility: vis,
+    isDefault: wantDefault,
     createdAt: new Date().toISOString(),
   };
-  db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, visibility, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.comboAccessMode, stringifyJson(apiKey.comboAccessList), apiKey.modelAccessMode, stringifyJson(apiKey.modelAccessList), apiKey.visibility, apiKey.createdAt]
-  );
+
+  db.transaction(() => {
+    if (wantDefault) clearAllDefaults(db);
+    db.run(
+      `INSERT INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, visibility, isDefault, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        apiKey.id,
+        apiKey.key,
+        apiKey.name,
+        apiKey.machineId,
+        1,
+        apiKey.comboAccessMode,
+        stringifyJson(apiKey.comboAccessList),
+        apiKey.modelAccessMode,
+        stringifyJson(apiKey.modelAccessList),
+        apiKey.visibility,
+        wantDefault ? 1 : 0,
+        apiKey.createdAt,
+      ]
+    );
+  });
+
   return apiKey;
+}
+
+/**
+ * Mark a public API key as the sole default for /connect.
+ * Private keys cannot be default.
+ */
+export async function setApiKeyDefault(id) {
+  const db = await getAdapter();
+  let result = null;
+  db.transaction(() => {
+    const row = db.get(`SELECT * FROM apiKeys WHERE id = ?`, [id]);
+    if (!row) return;
+    const existing = rowToKey(row);
+    if (existing.visibility !== "public") {
+      throw new Error("Only public API keys can be set as default");
+    }
+    clearAllDefaults(db);
+    db.run(`UPDATE apiKeys SET isDefault = 1 WHERE id = ?`, [id]);
+    result = { ...existing, isDefault: true };
+  });
+  return result;
 }
 
 export async function updateApiKey(id, data) {
@@ -148,15 +207,38 @@ export async function updateApiKey(id, data) {
     if (!row) return;
     const existing = rowToKey(row);
     // visibility is set only at create time — never change via update
-    const { visibility: _ignored, ...safeData } = data || {};
+    const { visibility: _ignored, isDefault: wantDefault, ...safeData } = data || {};
     const merged = { ...existing, ...safeData, visibility: existing.visibility };
     merged.comboAccessMode = normalizeComboAccessMode(merged.comboAccessMode);
     merged.comboAccessList = normalizeComboAccessList(merged.comboAccessList);
     merged.modelAccessMode = normalizeModelAccessMode(merged.modelAccessMode);
     merged.modelAccessList = normalizeModelAccessList(merged.modelAccessList);
+
+    if (existing.visibility !== "public") {
+      merged.isDefault = false;
+    } else if (wantDefault === true) {
+      clearAllDefaults(db);
+      merged.isDefault = true;
+    } else if (wantDefault === false) {
+      merged.isDefault = false;
+    } else {
+      merged.isDefault = existing.isDefault;
+    }
+
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, comboAccessMode = ?, comboAccessList = ?, modelAccessMode = ?, modelAccessList = ? WHERE id = ?`,
-      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.comboAccessMode, stringifyJson(merged.comboAccessList), merged.modelAccessMode, stringifyJson(merged.modelAccessList), id]
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, comboAccessMode = ?, comboAccessList = ?, modelAccessMode = ?, modelAccessList = ?, isDefault = ? WHERE id = ?`,
+      [
+        merged.key,
+        merged.name,
+        merged.machineId,
+        merged.isActive ? 1 : 0,
+        merged.comboAccessMode,
+        stringifyJson(merged.comboAccessList),
+        merged.modelAccessMode,
+        stringifyJson(merged.modelAccessList),
+        merged.isDefault ? 1 : 0,
+        id,
+      ]
     );
     result = merged;
   });

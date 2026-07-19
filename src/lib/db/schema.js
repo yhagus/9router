@@ -87,6 +87,7 @@ export const TABLES = {
       modelAccessMode: "TEXT DEFAULT 'whitelist'",
       modelAccessList: "TEXT DEFAULT '[]'",
       visibility: "TEXT DEFAULT 'private'",
+      isDefault: "INTEGER DEFAULT 0",
       createdAt: "TEXT NOT NULL",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],

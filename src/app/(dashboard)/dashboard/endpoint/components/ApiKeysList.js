@@ -20,17 +20,21 @@ function maskKey(fullKey) {
   return fullKey.slice(0, 6) + "•".repeat(Math.min(8, fullKey.length - 10)) + fullKey.slice(-4);
 }
 
-function KeyActionsMenu({ keyItem, onEditComboAccess, onEditModelAccess, onDeleteKey }) {
+function KeyActionsMenu({ keyItem, onEditComboAccess, onEditModelAccess, onSetDefault, onDeleteKey }) {
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
   const buttonRef = useRef(null);
   const menuRef = useRef(null);
+  const showSetDefault =
+    typeof onSetDefault === "function" &&
+    keyItem?.visibility === "public" &&
+    keyItem?.isDefault !== true;
 
   const updatePosition = useCallback(() => {
     const btn = buttonRef.current;
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
-    const menuHeight = menuRef.current?.offsetHeight || 140;
+    const menuHeight = menuRef.current?.offsetHeight || 160;
     const spaceBelow = window.innerHeight - rect.bottom;
     const openUp = spaceBelow < menuHeight + MENU_GAP && rect.top > spaceBelow;
     const top = openUp
@@ -104,6 +108,17 @@ function KeyActionsMenu({ keyItem, onEditComboAccess, onEditModelAccess, onDelet
             <span className="material-symbols-outlined text-[16px] text-text-muted">model_training</span>
             Model access
           </button>
+          {showSetDefault && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => run(() => onSetDefault(keyItem.id))}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 text-left"
+            >
+              <span className="material-symbols-outlined text-[16px] text-text-muted">star</span>
+              Set as default
+            </button>
+          )}
           <div className="my-1 border-t border-black/5 dark:border-white/5" />
           <button
             type="button"
@@ -154,6 +169,7 @@ export default function ApiKeysList({
   onToggleKey,
   onEditComboAccess,
   onEditModelAccess,
+  onSetDefault,
   onDeleteKey,
   onConfirmPause,
 }) {
@@ -252,6 +268,11 @@ export default function ApiKeysList({
                               Private
                             </span>
                           )}
+                          {key.visibility === "public" && key.isDefault && (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+                              Default
+                            </span>
+                          )}
                           {isPaused && (
                             <span className="text-[10px] px-1 py-0.5 rounded bg-orange-500/10 text-orange-500 shrink-0">
                               Paused
@@ -324,6 +345,7 @@ export default function ApiKeysList({
                             keyItem={key}
                             onEditComboAccess={onEditComboAccess}
                             onEditModelAccess={onEditModelAccess}
+                            onSetDefault={onSetDefault}
                             onDeleteKey={onDeleteKey}
                           />
                         </div>

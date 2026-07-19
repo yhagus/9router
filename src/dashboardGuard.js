@@ -30,6 +30,7 @@ const PUBLIC_API_PATHS = [
   "/api/version",
   "/api/settings/require-login",
   "/api/client/auth/login",
+  "/api/connect",
 ];
 
 // Public top-level prefixes (LLM API endpoints with their own API key auth).

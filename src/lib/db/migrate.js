@@ -141,9 +141,10 @@ function importLegacyMain(adapter, data) {
   }, (p) => ({ id: p.id ?? null }));
 
   importWithAssertion(adapter, "apiKeys", data.apiKeys || [], (k) => {
+    const isPublic = k.visibility === "public";
     adapter.run(
-      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, visibility, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.comboAccessMode === "whitelist" ? "whitelist" : "blacklist", stringifyJson(Array.isArray(k.comboAccessList) ? k.comboAccessList : []), k.modelAccessMode === "blacklist" ? "blacklist" : "whitelist", stringifyJson(Array.isArray(k.modelAccessList) ? k.modelAccessList : []), k.visibility === "public" ? "public" : "private", k.createdAt || new Date().toISOString()]
+      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, comboAccessMode, comboAccessList, modelAccessMode, modelAccessList, visibility, isDefault, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.comboAccessMode === "whitelist" ? "whitelist" : "blacklist", stringifyJson(Array.isArray(k.comboAccessList) ? k.comboAccessList : []), k.modelAccessMode === "blacklist" ? "blacklist" : "whitelist", stringifyJson(Array.isArray(k.modelAccessList) ? k.modelAccessList : []), isPublic ? "public" : "private", isPublic && k.isDefault ? 1 : 0, k.createdAt || new Date().toISOString()]
     );
   }, (k) => ({ id: k.id ?? null, name: k.name ?? null }));
 

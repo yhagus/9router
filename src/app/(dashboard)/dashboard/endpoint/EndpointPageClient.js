@@ -38,6 +38,7 @@ export default function APIPageClient({ machineId }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [newKeyVisibility, setNewKeyVisibility] = useState("private");
+  const [newKeyIsDefault, setNewKeyIsDefault] = useState(false);
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
   const [combos, setCombos] = useState([]);
@@ -675,7 +676,11 @@ export default function APIPageClient({ machineId }) {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName, visibility }),
+        body: JSON.stringify({
+          name: newKeyName,
+          visibility,
+          isDefault: visibility === "public" && newKeyIsDefault,
+        }),
       });
       const data = await res.json();
 
@@ -683,6 +688,7 @@ export default function APIPageClient({ machineId }) {
         setCreatedKey(data.key);
         setNewKeyName("");
         setNewKeyVisibility("private");
+        setNewKeyIsDefault(false);
         setShowAddModal(false);
         setKeysSearchInput("");
         setKeysSearch("");
@@ -692,6 +698,26 @@ export default function APIPageClient({ machineId }) {
       }
     } catch (error) {
       console.log("Error creating key:", error);
+    }
+  };
+
+  const handleSetDefaultKey = async (id) => {
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isDefault: true }),
+      });
+      if (res.ok) {
+        setKeys((prev) =>
+          prev.map((k) => ({
+            ...k,
+            isDefault: k.id === id && k.visibility === "public",
+          }))
+        );
+      }
+    } catch (error) {
+      console.log("Error setting default key:", error);
     }
   };
 
@@ -1163,6 +1189,7 @@ export default function APIPageClient({ machineId }) {
           onCopy={copy}
           onCreate={() => {
             setNewKeyVisibility(keysVisibilityTab === "public" ? "public" : "private");
+            setNewKeyIsDefault(false);
             setShowAddModal(true);
           }}
           onToggleKey={handleToggleKey}
@@ -1176,6 +1203,7 @@ export default function APIPageClient({ machineId }) {
             modelAccessMode: key.modelAccessMode || "whitelist",
             modelAccessList: Array.isArray(key.modelAccessList) ? key.modelAccessList : [],
           })}
+          onSetDefault={handleSetDefaultKey}
           onDeleteKey={handleDeleteKey}
           onConfirmPause={(key, checked) => {
             setConfirmState({
@@ -1198,6 +1226,7 @@ export default function APIPageClient({ machineId }) {
           setShowAddModal(false);
           setNewKeyName("");
           setNewKeyVisibility("private");
+          setNewKeyIsDefault(false);
         }}
       >
         <div className="flex flex-col gap-4">
@@ -1212,7 +1241,10 @@ export default function APIPageClient({ machineId }) {
             <SegmentedControl
               size="sm"
               value={newKeyVisibility}
-              onChange={setNewKeyVisibility}
+              onChange={(v) => {
+                setNewKeyVisibility(v);
+                if (v !== "public") setNewKeyIsDefault(false);
+              }}
               options={[
                 { value: "private", label: "Private" },
                 { value: "public", label: "Public" },
@@ -1224,6 +1256,23 @@ export default function APIPageClient({ machineId }) {
                 : "Private keys can use the API and sign in at /login/guest."}
             </p>
           </div>
+          {newKeyVisibility === "public" && (
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 rounded border-border"
+                checked={newKeyIsDefault}
+                onChange={(e) => setNewKeyIsDefault(e.target.checked)}
+              />
+              <span className="text-sm text-text-main">
+                Set as default for{" "}
+                <code className="text-xs bg-sidebar px-1 rounded">/connect</code>
+                <span className="block text-xs text-text-muted mt-0.5">
+                  Only one public key can be default. This replaces any existing default.
+                </span>
+              </span>
+            </label>
+          )}
           <div className="flex gap-2">
             <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
               Create
@@ -1233,6 +1282,7 @@ export default function APIPageClient({ machineId }) {
                 setShowAddModal(false);
                 setNewKeyName("");
                 setNewKeyVisibility("private");
+                setNewKeyIsDefault(false);
               }}
               variant="ghost"
               fullWidth
