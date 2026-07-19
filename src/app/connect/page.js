@@ -2,13 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, Button, Input } from "@/shared/components";
-
-function formatCompact(n) {
-  const num = Number(n) || 0;
-  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(num >= 10_000_000 ? 0 : 1)}M`;
-  if (num >= 1_000) return `${(num / 1_000).toFixed(num >= 10_000 ? 0 : 1)}k`;
-  return String(num);
-}
+import { formatCompact } from "@/shared/utils";
 
 function getUsageLimit(k) {
   if (!k?.limitMode || k.limitMode === "none" || !(k.limitValue > 0)) return null;

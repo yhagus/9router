@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Card, Input, Pagination } from "@/shared/components";
+import { formatCompact } from "@/shared/utils";
 import ApiKeyDetailDrawer from "./ApiKeyDetailDrawer";
 
 const EMPTY_USAGE = {
@@ -20,13 +21,6 @@ const PERIOD_LABELS = {
   "60d": "60D",
   all: "All Time",
 };
-
-function formatCompact(n) {
-  const num = Number(n) || 0;
-  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(num >= 10_000_000 ? 0 : 1)}M`;
-  if (num >= 1_000) return `${(num / 1_000).toFixed(num >= 10_000 ? 0 : 1)}k`;
-  return String(num);
-}
 
 function maskKey(fullKey) {
   if (!fullKey || fullKey.length <= 10) return fullKey || "";

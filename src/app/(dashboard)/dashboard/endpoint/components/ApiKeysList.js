@@ -3,17 +3,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, Input, Pagination, Toggle, SegmentedControl } from "@/shared/components";
+import { formatCompact } from "@/shared/utils";
 
 const EMPTY_USAGE = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 const MENU_WIDTH = 180;
 const MENU_GAP = 4;
-
-function formatCompact(n) {
-  const num = Number(n) || 0;
-  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(num >= 10_000_000 ? 0 : 1)}M`;
-  if (num >= 1_000) return `${(num / 1_000).toFixed(num >= 10_000 ? 0 : 1)}k`;
-  return String(num);
-}
 
 function maskKey(fullKey) {
   if (!fullKey || fullKey.length <= 10) return fullKey || "";
