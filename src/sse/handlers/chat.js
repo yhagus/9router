@@ -208,8 +208,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   // Routing shown in the unified "▶" line (client model → provider/model)
 
-  // Extract userAgent from request
+  // Extract userAgent / client IP from request (IP set by custom-server / trusted proxy)
   const userAgent = request?.headers?.get("user-agent") || "";
+  const clientIp = request?.headers?.get("x-9r-real-ip") || "";
 
   // Try with available accounts (fallback on errors)
   const excludeConnectionIds = new Set();
@@ -260,6 +261,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       connectionId: credentials.connectionId,
       userAgent,
       apiKey,
+      clientIp,
       ccFilterNaming: !!chatSettings.ccFilterNaming,
       rtkEnabled: !!chatSettings.rtkEnabled,
       headroomEnabled: !!chatSettings.headroomEnabled,

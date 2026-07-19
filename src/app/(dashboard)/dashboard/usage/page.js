@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
 import RequestDetailsTab from "./components/RequestDetailsTab";
+import ApiKeysTab from "./components/ApiKeysTab";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -13,6 +14,14 @@ const PERIODS = [
   { value: "60d", label: "60D" },
   { value: "all", label: "All Time" },
 ];
+
+const TABS = [
+  { value: "overview", label: "Overview" },
+  { value: "details", label: "Details" },
+  { value: "api-keys", label: "API Key" },
+];
+
+const TAB_VALUES = new Set(TABS.map((t) => t.value));
 
 export default function UsagePage() {
   return (
@@ -26,12 +35,14 @@ function UsageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const [period, setPeriod] = useState("today");
+  const [overviewPeriod, setOverviewPeriod] = useState("today");
+  const [apiKeysPeriod, setApiKeysPeriod] = useState("all");
 
   const tabFromUrl = searchParams.get("tab");
-  const activeTab = tabFromUrl && ["overview", "logs", "details"].includes(tabFromUrl)
-    ? tabFromUrl
-    : "overview";
+  const activeTab = tabFromUrl && TAB_VALUES.has(tabFromUrl) ? tabFromUrl : "overview";
+  const showPeriod = activeTab === "overview" || activeTab === "api-keys";
+  const period = activeTab === "api-keys" ? apiKeysPeriod : overviewPeriod;
+  const setPeriod = activeTab === "api-keys" ? setApiKeysPeriod : setOverviewPeriod;
 
   const handleTabChange = (value) => {
     if (value === activeTab) return;
@@ -42,18 +53,14 @@ function UsageContent() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
-      {/* Tabs + period selector on same row */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <SegmentedControl
-          options={[
-            { value: "overview", label: "Overview" },
-            { value: "details", label: "Details" },
-          ]}
+          options={TABS}
           value={activeTab}
           onChange={handleTabChange}
           className="w-full sm:w-auto"
         />
-        {activeTab === "overview" && (
+        {showPeriod && (
           <SegmentedControl
             options={PERIODS}
             value={period}
@@ -66,11 +73,12 @@ function UsageContent() {
 
       {activeTab === "overview" && (
         <Suspense fallback={<CardSkeleton />}>
-          <UsageStats period={period} setPeriod={setPeriod} hidePeriodSelector />
+          <UsageStats period={overviewPeriod} setPeriod={setOverviewPeriod} hidePeriodSelector />
         </Suspense>
       )}
       {activeTab === "logs" && <RequestLogger />}
       {activeTab === "details" && <RequestDetailsTab />}
+      {activeTab === "api-keys" && <ApiKeysTab period={apiKeysPeriod} />}
     </div>
   );
 }

@@ -310,12 +310,16 @@ export async function getActiveRequests() {
 export async function saveRequestUsage(entry) {
   try {
     const db = await getAdapter();
+    const hasClientIp = ensureUsageHistoryClientIp(db);
 
     if (!entry.timestamp) entry.timestamp = new Date().toISOString();
     entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
 
     const tokens = entry.tokens || {};
     const { promptTokens, completionTokens } = getUsageTokenCounts(tokens);
+    const clientIp = typeof entry.clientIp === "string" && entry.clientIp.trim()
+      ? entry.clientIp.trim()
+      : null;
 
     let inserted = false;
 
@@ -346,15 +350,28 @@ export async function saveRequestUsage(entry) {
         return;
       }
 
-      db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          entry.timestamp, entry.provider || null, entry.model || null,
-          entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
-          promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({}),
-        ]
-      );
+      if (hasClientIp) {
+        db.run(
+          `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            entry.timestamp, entry.provider || null, entry.model || null,
+            entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
+            clientIp,
+            promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
+            stringifyJson(tokens), stringifyJson({}),
+          ]
+        );
+      } else {
+        db.run(
+          `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            entry.timestamp, entry.provider || null, entry.model || null,
+            entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
+            promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
+            stringifyJson(tokens), stringifyJson({}),
+          ]
+        );
+      }
 
       const dateKey = getLocalDateKey(entry.timestamp);
       const row = db.get(`SELECT data FROM usageDaily WHERE dateKey = ?`, [dateKey]);
@@ -398,22 +415,61 @@ export async function getUsageHistory(filter = {}) {
   }));
 }
 
-export async function getUsageStatsForApiKey(apiKey) {
-  const db = await getAdapter();
-  const rows = db.all(
-    `SELECT timestamp, provider, model, promptTokens, completionTokens, status, tokens
-     FROM usageHistory
-     WHERE apiKey = ?
-     ORDER BY id DESC`,
-    [apiKey]
-  );
+function usageHistoryHasClientIp(db) {
+  try {
+    const cols = db.all(`PRAGMA table_info(usageHistory)`);
+    return cols.some((c) => c.name === "clientIp");
+  } catch {
+    return false;
+  }
+}
 
+function ensureUsageHistoryClientIp(db) {
+  if (usageHistoryHasClientIp(db)) return true;
+  try {
+    db.exec(`ALTER TABLE usageHistory ADD COLUMN clientIp TEXT`);
+    return true;
+  } catch {
+    return usageHistoryHasClientIp(db);
+  }
+}
+
+/**
+ * @param {string} apiKey
+ * @param {{ period?: string, recentLimit?: number }} [opts]
+ */
+export async function getUsageStatsForApiKey(apiKey, { period = "all", recentLimit = 30 } = {}) {
+  const db = await getAdapter();
+  const cutoff = getPeriodStartIso(period);
+  const hasClientIp = ensureUsageHistoryClientIp(db);
+  const ipCol = hasClientIp ? ", clientIp" : "";
+  const rows = cutoff
+    ? db.all(
+        `SELECT timestamp, provider, model, promptTokens, completionTokens, status, tokens, cost${ipCol}
+         FROM usageHistory
+         WHERE apiKey = ? AND timestamp >= ?
+         ORDER BY id DESC`,
+        [apiKey, cutoff]
+      )
+    : db.all(
+        `SELECT timestamp, provider, model, promptTokens, completionTokens, status, tokens, cost${ipCol}
+         FROM usageHistory
+         WHERE apiKey = ?
+         ORDER BY id DESC`,
+        [apiKey]
+      );
+
+  const safeRecentLimit = Math.max(0, Math.min(100, Number(recentLimit) || 30));
   const stats = {
     totalRequests: rows.length,
     totalPromptTokens: 0,
     totalCompletionTokens: 0,
     totalCachedTokens: 0,
+    totalCost: 0,
+    lastUsed: null,
     byModel: {},
+    byProvider: {},
+    byIp: {},
     recentRequests: [],
   };
 
@@ -421,10 +477,17 @@ export async function getUsageStatsForApiKey(apiKey) {
     const tokens = parseJson(r.tokens, {}) || {};
     const { promptTokens, completionTokens, cachedTokens } = getUsageTokenCounts(tokens, r);
     const modelKey = r.provider ? `${r.model} (${r.provider})` : r.model;
+    const entryCost = Number(r.cost) || 0;
+    const providerKey = r.provider || "unknown";
+    const clientIp = (typeof r.clientIp === "string" && r.clientIp.trim()) ? r.clientIp.trim() : null;
 
     stats.totalPromptTokens += promptTokens;
     stats.totalCompletionTokens += completionTokens;
     stats.totalCachedTokens += cachedTokens;
+    stats.totalCost += entryCost;
+    if (!stats.lastUsed || new Date(r.timestamp) > new Date(stats.lastUsed)) {
+      stats.lastUsed = r.timestamp;
+    }
 
     if (!stats.byModel[modelKey]) {
       stats.byModel[modelKey] = {
@@ -434,6 +497,7 @@ export async function getUsageStatsForApiKey(apiKey) {
         promptTokens: 0,
         completionTokens: 0,
         cachedTokens: 0,
+        cost: 0,
         lastUsed: r.timestamp,
       };
     }
@@ -442,29 +506,98 @@ export async function getUsageStatsForApiKey(apiKey) {
     modelStats.promptTokens += promptTokens;
     modelStats.completionTokens += completionTokens;
     modelStats.cachedTokens += cachedTokens;
+    modelStats.cost += entryCost;
     if (new Date(r.timestamp) > new Date(modelStats.lastUsed)) modelStats.lastUsed = r.timestamp;
 
-    stats.recentRequests.push({
-      timestamp: r.timestamp,
-      model: r.model,
-      provider: r.provider || "",
-      promptTokens,
-      completionTokens,
-      cachedTokens,
-      status: r.status || "ok",
-    });
+    if (!stats.byProvider[providerKey]) {
+      stats.byProvider[providerKey] = {
+        provider: providerKey,
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        cost: 0,
+        lastUsed: r.timestamp,
+      };
+    }
+    const providerStats = stats.byProvider[providerKey];
+    providerStats.requests++;
+    providerStats.promptTokens += promptTokens;
+    providerStats.completionTokens += completionTokens;
+    providerStats.cachedTokens += cachedTokens;
+    providerStats.cost += entryCost;
+    if (new Date(r.timestamp) > new Date(providerStats.lastUsed)) providerStats.lastUsed = r.timestamp;
+
+    if (clientIp) {
+      if (!stats.byIp[clientIp]) {
+        stats.byIp[clientIp] = {
+          ip: clientIp,
+          requests: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          lastUsed: r.timestamp,
+        };
+      }
+      const ipStats = stats.byIp[clientIp];
+      ipStats.requests++;
+      ipStats.promptTokens += promptTokens;
+      ipStats.completionTokens += completionTokens;
+      if (new Date(r.timestamp) > new Date(ipStats.lastUsed)) ipStats.lastUsed = r.timestamp;
+    }
+
+    if (stats.recentRequests.length < safeRecentLimit) {
+      stats.recentRequests.push({
+        timestamp: r.timestamp,
+        model: r.model,
+        provider: r.provider || "",
+        promptTokens,
+        completionTokens,
+        cachedTokens,
+        status: r.status || "ok",
+        clientIp,
+      });
+    }
   }
 
   stats.byModel = Object.values(stats.byModel).sort((a, b) => b.requests - a.requests);
+  stats.byProvider = Object.values(stats.byProvider).sort((a, b) => b.requests - a.requests);
+  stats.byIp = Object.values(stats.byIp).sort((a, b) => b.requests - a.requests);
+  stats.totalTokens = stats.totalPromptTokens + stats.totalCompletionTokens;
+  stats.uniqueIps = stats.byIp.length;
+
+  const topByRequests = stats.byModel[0] || null;
+  const topByTokens = [...stats.byModel].sort(
+    (a, b) => (b.promptTokens + b.completionTokens) - (a.promptTokens + a.completionTokens)
+  )[0] || null;
+  stats.highlights = {
+    mostRequestedModel: topByRequests
+      ? {
+          model: topByRequests.rawModel,
+          provider: topByRequests.provider,
+          requests: topByRequests.requests,
+          totalTokens: topByRequests.promptTokens + topByRequests.completionTokens,
+        }
+      : null,
+    mostTokensModel: topByTokens
+      ? {
+          model: topByTokens.rawModel,
+          provider: topByTokens.provider,
+          requests: topByTokens.requests,
+          totalTokens: topByTokens.promptTokens + topByTokens.completionTokens,
+        }
+      : null,
+  };
+
   return stats;
 }
 
 /**
  * Aggregate usage totals for a batch of API key strings.
  * @param {string[]} apiKeys
- * @returns {Promise<Record<string, { requests: number, promptTokens: number, completionTokens: number, totalTokens: number }>>}
+ * @param {{ period?: string }} [opts]
+ * @returns {Promise<Record<string, { requests: number, promptTokens: number, completionTokens: number, totalTokens: number, lastUsed: string|null }>>}
  */
-export async function getUsageTotalsByApiKeys(apiKeys) {
+export async function getUsageTotalsByApiKeys(apiKeys, { period = "all" } = {}) {
   const result = {};
   const keys = Array.isArray(apiKeys)
     ? Array.from(new Set(apiKeys.filter((k) => typeof k === "string" && k)))
@@ -473,16 +606,30 @@ export async function getUsageTotalsByApiKeys(apiKeys) {
 
   const db = await getAdapter();
   const placeholders = keys.map(() => "?").join(", ");
-  const rows = db.all(
-    `SELECT apiKey,
-            COUNT(*) as requests,
-            COALESCE(SUM(promptTokens), 0) as promptTokens,
-            COALESCE(SUM(completionTokens), 0) as completionTokens
-     FROM usageHistory
-     WHERE apiKey IN (${placeholders})
-     GROUP BY apiKey`,
-    keys
-  );
+  const cutoff = getPeriodStartIso(period);
+  const rows = cutoff
+    ? db.all(
+        `SELECT apiKey,
+                COUNT(*) as requests,
+                COALESCE(SUM(promptTokens), 0) as promptTokens,
+                COALESCE(SUM(completionTokens), 0) as completionTokens,
+                MAX(timestamp) as lastUsed
+         FROM usageHistory
+         WHERE apiKey IN (${placeholders}) AND timestamp >= ?
+         GROUP BY apiKey`,
+        [...keys, cutoff]
+      )
+    : db.all(
+        `SELECT apiKey,
+                COUNT(*) as requests,
+                COALESCE(SUM(promptTokens), 0) as promptTokens,
+                COALESCE(SUM(completionTokens), 0) as completionTokens,
+                MAX(timestamp) as lastUsed
+         FROM usageHistory
+         WHERE apiKey IN (${placeholders})
+         GROUP BY apiKey`,
+        keys
+      );
 
   for (const r of rows) {
     const promptTokens = Number(r.promptTokens) || 0;
@@ -492,12 +639,19 @@ export async function getUsageTotalsByApiKeys(apiKeys) {
       promptTokens,
       completionTokens,
       totalTokens: promptTokens + completionTokens,
+      lastUsed: r.lastUsed || null,
     };
   }
 
   for (const key of keys) {
     if (!result[key]) {
-      result[key] = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      result[key] = {
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        lastUsed: null,
+      };
     }
   }
 
