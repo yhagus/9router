@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getApiKeyByKey } from "@/lib/localDb";
+import { isApiKeyPublic } from "@/shared/utils/apiKeyVisibility";
 import { setClientAuthCookie } from "@/lib/auth/dashboardSession";
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
@@ -11,6 +12,12 @@ export async function POST(request) {
     const key = await getApiKeyByKey(apiKey);
     if (!key?.isActive) {
       return NextResponse.json({ error: "Invalid API key" }, { status: 401, headers: NO_STORE_HEADERS });
+    }
+    if (isApiKeyPublic(key)) {
+      return NextResponse.json(
+        { error: "This API key cannot be used for guest login" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const cookieStore = await cookies();

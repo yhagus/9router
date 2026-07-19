@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
-import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
+import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal, SegmentedControl } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import {
   TUNNEL_BENEFITS,
@@ -33,9 +33,11 @@ export default function APIPageClient({ machineId }) {
   const [keysPageSize, setKeysPageSize] = useState(KEYS_PAGE_SIZE);
   const [keysSearchInput, setKeysSearchInput] = useState("");
   const [keysSearch, setKeysSearch] = useState("");
+  const [keysVisibilityTab, setKeysVisibilityTab] = useState("private");
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyVisibility, setNewKeyVisibility] = useState("private");
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
   const [combos, setCombos] = useState([]);
@@ -270,11 +272,12 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  const fetchKeys = useCallback(async (page = keysPage, pageSize = keysPageSize, search = keysSearch) => {
+  const fetchKeys = useCallback(async (page = keysPage, pageSize = keysPageSize, search = keysSearch, visibility = keysVisibilityTab) => {
     try {
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
+        visibility: visibility === "public" ? "public" : "private",
       });
       if (search.trim()) params.set("search", search.trim());
       const res = await fetch(`/api/keys?${params}`);
@@ -289,12 +292,12 @@ export default function APIPageClient({ machineId }) {
     } catch (error) {
       console.log("Error fetching keys:", error);
     }
-  }, [keysPage, keysPageSize, keysSearch]);
+  }, [keysPage, keysPageSize, keysSearch, keysVisibilityTab]);
 
   const fetchData = async () => {
     try {
       const [, combosRes] = await Promise.all([
-        fetchKeys(keysPage, keysPageSize, keysSearch),
+        fetchKeys(keysPage, keysPageSize, keysSearch, keysVisibilityTab),
         fetch("/api/combos"),
       ]);
       if (combosRes.ok) {
@@ -321,8 +324,8 @@ export default function APIPageClient({ machineId }) {
 
   useEffect(() => {
     if (loading) return;
-    fetchKeys(keysPage, keysPageSize, keysSearch);
-  }, [keysPage, keysPageSize, keysSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+    fetchKeys(keysPage, keysPageSize, keysSearch, keysVisibilityTab);
+  }, [keysPage, keysPageSize, keysSearch, keysVisibilityTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // u2500u2500u2500 Cloudflare Tunnel handlers
   // Ping tunnel health until reachable. Race multiple URLs (shortlink + direct) — 1 OK is enough.
@@ -668,21 +671,24 @@ export default function APIPageClient({ machineId }) {
     if (!newKeyName.trim()) return;
 
     try {
+      const visibility = newKeyVisibility === "public" ? "public" : "private";
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify({ name: newKeyName, visibility }),
       });
       const data = await res.json();
 
       if (res.ok) {
         setCreatedKey(data.key);
         setNewKeyName("");
+        setNewKeyVisibility("private");
         setShowAddModal(false);
         setKeysSearchInput("");
         setKeysSearch("");
+        setKeysVisibilityTab(visibility);
         if (keysPage !== 1) setKeysPage(1);
-        else await fetchKeys(1, keysPageSize, "");
+        else await fetchKeys(1, keysPageSize, "", visibility);
       }
     } catch (error) {
       console.log("Error creating key:", error);
@@ -1146,11 +1152,19 @@ export default function APIPageClient({ machineId }) {
             setKeysPageSize(size);
             setKeysPage(1);
           }}
+          visibilityTab={keysVisibilityTab}
+          onVisibilityTabChange={(tab) => {
+            setKeysVisibilityTab(tab);
+            setKeysPage(1);
+          }}
           visibleKeys={visibleKeys}
           onToggleVisibility={toggleKeyVisibility}
           copied={copied}
           onCopy={copy}
-          onCreate={() => setShowAddModal(true)}
+          onCreate={() => {
+            setNewKeyVisibility(keysVisibilityTab === "public" ? "public" : "private");
+            setShowAddModal(true);
+          }}
           onToggleKey={handleToggleKey}
           onEditComboAccess={(key) => setEditingComboAccess({
             ...key,
@@ -1183,6 +1197,7 @@ export default function APIPageClient({ machineId }) {
         onClose={() => {
           setShowAddModal(false);
           setNewKeyName("");
+          setNewKeyVisibility("private");
         }}
       >
         <div className="flex flex-col gap-4">
@@ -1192,6 +1207,23 @@ export default function APIPageClient({ machineId }) {
             onChange={(e) => setNewKeyName(e.target.value)}
             placeholder="Production Key"
           />
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">Type</label>
+            <SegmentedControl
+              size="sm"
+              value={newKeyVisibility}
+              onChange={setNewKeyVisibility}
+              options={[
+                { value: "private", label: "Private" },
+                { value: "public", label: "Public" },
+              ]}
+            />
+            <p className="text-xs text-text-muted">
+              {newKeyVisibility === "public"
+                ? "Public keys work for API calls but cannot sign in to the client portal."
+                : "Private keys can use the API and sign in at /login/guest."}
+            </p>
+          </div>
           <div className="flex gap-2">
             <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
               Create
@@ -1200,6 +1232,7 @@ export default function APIPageClient({ machineId }) {
               onClick={() => {
                 setShowAddModal(false);
                 setNewKeyName("");
+                setNewKeyVisibility("private");
               }}
               variant="ghost"
               fullWidth

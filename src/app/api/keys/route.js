@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getApiKeys, listApiKeys, createApiKey } from "@/lib/localDb";
+import { normalizeApiKeyVisibility } from "@/shared/utils/apiKeyVisibility";
 import { getUsageTotalsByApiKeys } from "@/lib/usageDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 
@@ -8,7 +9,7 @@ export const dynamic = "force-dynamic";
 const EMPTY_USAGE = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
 function hasPaginationParams(searchParams) {
-  return searchParams.has("page") || searchParams.has("pageSize") || searchParams.has("search");
+  return searchParams.has("page") || searchParams.has("pageSize") || searchParams.has("search") || searchParams.has("visibility");
 }
 
 async function attachUsage(keys) {
@@ -20,7 +21,7 @@ async function attachUsage(keys) {
 }
 
 // GET /api/keys - List API keys
-// With page/pageSize/search → paginated response + per-key usage totals
+// With page/pageSize/search/visibility → paginated response + per-key usage totals
 // Without those params → full list (backward compatible for dropdowns/CLI)
 export async function GET(request) {
   try {
@@ -30,10 +31,15 @@ export async function GET(request) {
       const page = Number(searchParams.get("page")) || 1;
       const pageSize = Number(searchParams.get("pageSize")) || 10;
       const search = searchParams.get("search") || "";
+      const visibilityParam = searchParams.get("visibility");
+      const visibility = visibilityParam === "public" || visibilityParam === "private"
+        ? visibilityParam
+        : undefined;
       const { keys, total, page: safePage, pageSize: safePageSize } = await listApiKeys({
         search,
         page,
         pageSize,
+        visibility,
       });
       const keysWithUsage = await attachUsage(keys);
       return NextResponse.json({
@@ -59,7 +65,7 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name } = body;
+    const { name, visibility } = body;
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -67,13 +73,16 @@ export async function POST(request) {
 
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
-    const apiKey = await createApiKey(name, machineId);
+    const apiKey = await createApiKey(name, machineId, {
+      visibility: normalizeApiKeyVisibility(visibility),
+    });
 
     return NextResponse.json({
       key: apiKey.key,
       name: apiKey.name,
       id: apiKey.id,
       machineId: apiKey.machineId,
+      visibility: apiKey.visibility,
     }, { status: 201 });
   } catch (error) {
     console.log("Error creating key:", error);

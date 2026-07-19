@@ -174,6 +174,8 @@ async function getValidClientSession(request) {
   if (!session?.apiKeyId) return null;
   const key = await getApiKeyById(session.apiKeyId);
   if (!key?.isActive) return null;
+  // Public keys cannot use client portal sessions
+  if (key.visibility === "public") return null;
   return { session, key };
 }
 

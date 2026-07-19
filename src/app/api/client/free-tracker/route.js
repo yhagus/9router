@@ -21,7 +21,7 @@ export async function GET() {
   }
 
   const key = await getApiKeyById(session.apiKeyId);
-  if (!key?.isActive) {
+  if (!key?.isActive || key.visibility === "public") {
     return NextResponse.json(
       { error: "Unauthorized" },
       { status: 401, headers: { "Cache-Control": "no-store" } },

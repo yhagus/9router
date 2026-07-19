@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Button, Input, Pagination, Toggle } from "@/shared/components";
+import { Button, Input, Pagination, Toggle, SegmentedControl } from "@/shared/components";
 
 const EMPTY_USAGE = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 const MENU_WIDTH = 180;
@@ -144,6 +144,8 @@ export default function ApiKeysList({
   onSearchChange,
   onPageChange,
   onPageSizeChange,
+  visibilityTab = "private",
+  onVisibilityTabChange,
   visibleKeys,
   onToggleVisibility,
   copied,
@@ -158,9 +160,22 @@ export default function ApiKeysList({
   const hasKeys = keys.length > 0;
   const hasSearch = Boolean(searchInput?.trim());
   const totalItems = pagination?.totalItems ?? 0;
+  const tabLabel = visibilityTab === "public" ? "public" : "private";
 
   return (
     <div className="flex flex-col gap-3">
+      {typeof onVisibilityTabChange === "function" && (
+        <SegmentedControl
+          size="sm"
+          value={visibilityTab === "public" ? "public" : "private"}
+          onChange={onVisibilityTabChange}
+          options={[
+            { value: "private", label: "Private" },
+            { value: "public", label: "Public" },
+          ]}
+        />
+      )}
+
       <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
         <div className="flex-1 min-w-0">
           <Input
@@ -182,12 +197,12 @@ export default function ApiKeysList({
             <span className="material-symbols-outlined text-[24px]">vpn_key</span>
           </div>
           <p className="text-text-main font-medium mb-1">
-            {hasSearch ? "No matching API keys" : "No API keys yet"}
+            {hasSearch ? "No matching API keys" : `No ${tabLabel} API keys yet`}
           </p>
           <p className="text-sm text-text-muted mb-3">
             {hasSearch
               ? "Try a different name or clear the search"
-              : "Create your first API key to get started"}
+              : `Create a ${tabLabel} API key to get started`}
           </p>
           {!hasSearch && (
             <Button icon="add" onClick={onCreate}>
@@ -228,6 +243,15 @@ export default function ApiKeysList({
                           <span className="text-sm font-medium truncate" title={key.name}>
                             {key.name}
                           </span>
+                          {key.visibility === "public" ? (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 shrink-0">
+                              Public
+                            </span>
+                          ) : (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-black/5 dark:bg-white/10 text-text-muted shrink-0">
+                              Private
+                            </span>
+                          )}
                           {isPaused && (
                             <span className="text-[10px] px-1 py-0.5 rounded bg-orange-500/10 text-orange-500 shrink-0">
                               Paused
