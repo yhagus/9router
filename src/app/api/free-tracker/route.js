@@ -17,14 +17,14 @@ export async function GET() {
     });
   } catch (err) {
     const message = err?.name === "AbortError"
-      ? "Timed out fetching InferHub pricing"
+      ? "Timed out fetching free model quotas"
       : err?.message || "Failed to fetch free model quotas";
     return NextResponse.json(
       {
         error: message,
         sources: [],
         pools: [],
-        source: "inferhub",
+        source: "free-tracker",
         sourceUrl: PRICING_URL,
       },
       { status: 502, headers: { "Cache-Control": "no-store" } },

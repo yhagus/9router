@@ -786,8 +786,39 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
       }
       default:
-        return { valid: false, error: "Provider test not supported" };
+        return probeRegistryOpenAICompatible(connection, effectiveProxy);
     }
+  } catch (err) {
+    return { valid: false, error: err.message };
+  }
+}
+
+/**
+ * Generic test for OpenAI-compatible registry providers (dudul, forge-api, venice, …).
+ * Uses transport.validateUrl or derives /models from baseUrl.
+ * Exported for unit tests.
+ */
+export async function probeRegistryOpenAICompatible(connection, effectiveProxy = null) {
+  const cfg = PROVIDERS[connection.provider];
+  if (!cfg || (cfg.format && cfg.format !== "openai") || (!cfg.validateUrl && !cfg.baseUrl)) {
+    return { valid: false, error: "Provider test not supported" };
+  }
+  if (!connection.apiKey && !cfg.noAuth) {
+    return { valid: false, error: "No API key" };
+  }
+
+  const modelsUrl = cfg.validateUrl
+    || cfg.baseUrl
+      .replace(/\/chat\/completions$/, "/models")
+      .replace(/\/chatbot$/, "/models");
+
+  const headers = { ...(cfg.headers || {}) };
+  if (cfg.authHeader === "x-api-key") headers["X-API-Key"] = connection.apiKey;
+  else if (connection.apiKey) headers.Authorization = `Bearer ${connection.apiKey}`;
+
+  try {
+    const res = await fetchWithConnectionProxy(modelsUrl, { headers }, effectiveProxy);
+    return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
   } catch (err) {
     return { valid: false, error: err.message };
   }
