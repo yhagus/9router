@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "next dev --webpack --port 20127",
     "dev:webpack": "next dev --webpack --port 20127",
-    "build": "next build --webpack",
+    "build": "next build --webpack && node scripts/prepare-standalone.cjs",
+    "prepare:standalone": "node scripts/prepare-standalone.cjs",
     "start": "next start --port 20127",
+    "start:standalone": "node custom-server.js",
     "dev:bun": "bun --bun next dev --webpack --port 20127",
-    "build:bun": "bun --bun next build --webpack",
+    "build:bun": "bun --bun next build --webpack && node scripts/prepare-standalone.cjs",
     "start:bun": "bun ./.next/standalone/server.js",
     "cli:pack": "npm --prefix cli run pack:cli",
     "cli:publish": "npm --prefix cli run publish:cli"

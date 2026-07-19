@@ -1,4 +1,36 @@
+const fs = require("fs");
+const path = require("path");
 const http = require("http");
+
+// Allow starting from repo root: chdir into Next standalone so ./server.js resolves.
+(function ensureStandaloneCwd() {
+  const here = __dirname;
+  const candidates = [
+    path.join(here, "server.js"),
+    path.join(here, ".next", "standalone", "server.js"),
+  ];
+  // Nested package-name layout under standalone
+  const standaloneRoot = path.join(here, ".next", "standalone");
+  if (fs.existsSync(standaloneRoot)) {
+    try {
+      for (const ent of fs.readdirSync(standaloneRoot, { withFileTypes: true })) {
+        if (ent.isDirectory()) {
+          candidates.push(path.join(standaloneRoot, ent.name, "server.js"));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  for (const serverPath of candidates) {
+    if (!fs.existsSync(serverPath)) continue;
+    const dir = path.dirname(serverPath);
+    if (process.cwd() !== dir) {
+      process.chdir(dir);
+    }
+    return;
+  }
+})();
 
 const origCreate = http.createServer.bind(http);
 
@@ -29,4 +61,11 @@ http.createServer = (...args) => {
   return origCreate(...rest, wrapped);
 };
 
-require("./server.js");
+const serverJs = path.join(process.cwd(), "server.js");
+if (!fs.existsSync(serverJs)) {
+  console.error("Error: server.js not found. Run `npm run build` (includes prepare-standalone) first.");
+  console.error(`Looked in: ${process.cwd()}`);
+  process.exit(1);
+}
+
+require(serverJs);
