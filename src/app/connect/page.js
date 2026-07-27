@@ -29,6 +29,7 @@ function barColor(pct, over) {
 export default function ConnectPage() {
   const [baseUrl, setBaseUrl] = useState("/v1");
   const [keys, setKeys] = useState([]);
+  const [combos, setCombos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(null);
@@ -46,12 +47,15 @@ export default function ConnectPage() {
       if (!res.ok) {
         setError(data.error || "Failed to load");
         setKeys([]);
+        setCombos([]);
         return;
       }
       setKeys(Array.isArray(data.keys) ? data.keys : []);
+      setCombos(Array.isArray(data.combos) ? data.combos : []);
     } catch {
       setError("Failed to load connect info");
       setKeys([]);
+      setCombos([]);
     } finally {
       setLoading(false);
     }
@@ -188,6 +192,47 @@ export default function ConnectPage() {
             )}
           </div>
         </Card>
+
+        {keys.length > 0 && (
+          <Card padding="md">
+            <div className="flex flex-col gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-text-main flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-primary text-[18px]">hub</span>
+                  Models
+                </h2>
+                <p className="text-xs text-text-muted mt-0.5">
+                  Use one of these as the{" "}
+                  <code className="bg-sidebar px-1 rounded">model</code> value in your requests. Click to copy.
+                </p>
+              </div>
+
+              {combos.length === 0 ? (
+                <p className="text-xs text-text-muted text-center py-4">
+                  No models available for this key
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {combos.map((c) => (
+                    <button
+                      key={c.name}
+                      type="button"
+                      onClick={() => copy(c.name, `combo-${c.name}`)}
+                      title={`Copy ${c.name}`}
+                      aria-label={`Copy model ${c.name}`}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary text-xs font-mono transition-colors"
+                    >
+                      {copied === `combo-${c.name}` ? (
+                        <span className="material-symbols-outlined text-[14px]">check</span>
+                      ) : null}
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+        )}
 
         {usageLimit && (
           <Card padding="md">

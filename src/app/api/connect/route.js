@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getDefaultPublicApiKey } from "@/lib/localDb";
+import { getDefaultPublicApiKey, getCombos } from "@/lib/localDb";
+import { canUseCombo } from "@/sse/services/accessGate";
 
 export const dynamic = "force-dynamic";
 
@@ -19,9 +20,17 @@ export async function GET() {
         }]
       : [];
 
+    // Combos usable by the default public key (minimal public shape: name + kind)
+    const combos = key
+      ? (await getCombos())
+          .filter((combo) => canUseCombo(key, combo.name))
+          .map((combo) => ({ name: combo.name, kind: combo.kind || null }))
+      : [];
+
     return NextResponse.json({
       basePath: "/v1",
       keys,
+      combos,
     });
   } catch (error) {
     console.log("Error fetching public connect info:", error);
