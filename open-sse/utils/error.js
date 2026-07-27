@@ -87,7 +87,7 @@ export async function parseUpstreamError(response, executor = null) {
       const parsed = executor.parseError(response, bodyText);
       if (parsed && typeof parsed === "object") {
         const msg = parsed.message || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
-        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs: parsed.resetsAtMs };
+        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs: parsed.resetsAtMs, disableAccount: parsed.disableAccount || false };
       }
     } catch { /* fall through to default parsing */ }
   }
@@ -143,9 +143,10 @@ export function createErrorResult(statusCode, message, resetsAtMs) {
  * @param {number} statusCode - HTTP status code (passed through unchanged)
  * @param {string} rawMessage - Original provider error message (internal only)
  * @param {number} [resetsAtMs] - Optional precise cooldown expiry (ms epoch)
- * @returns {{ success: false, status: number, error: string, response: Response, resetsAtMs?: number }}
+ * @param {boolean} [disableAccount] - If true, permanently disable the account (isActive: false)
+ * @returns {{ success: false, status: number, error: string, response: Response, resetsAtMs?: number, disableAccount?: boolean }}
  */
-export function createUpstreamErrorResult(statusCode, rawMessage, resetsAtMs) {
+export function createUpstreamErrorResult(statusCode, rawMessage, resetsAtMs, disableAccount = false) {
   const response = errorResponse(statusCode, templateErrorMessage(statusCode));
   // Plain property on the Response object — never serialized into the HTTP body,
   // but readable in-process (e.g. by combo fallback classification).
@@ -155,6 +156,7 @@ export function createUpstreamErrorResult(statusCode, rawMessage, resetsAtMs) {
     status: statusCode,
     error: rawMessage,
     resetsAtMs,
+    disableAccount,
     response
   };
 }

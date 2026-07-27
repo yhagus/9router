@@ -72,6 +72,16 @@ describe("createUpstreamErrorResult", () => {
     expect(text).not.toContain(secret);
     expect(text).toContain(DEFAULT_ERROR_MESSAGES[402]);
   });
+
+  it("passes disableAccount flag through to the result", () => {
+    const result = createUpstreamErrorResult(403, "credits exhausted", null, true);
+    expect(result.disableAccount).toBe(true);
+  });
+
+  it("defaults disableAccount to false when not provided", () => {
+    const result = createUpstreamErrorResult(429, "rate limited", null);
+    expect(result.disableAccount).toBe(false);
+  });
 });
 
 describe("createErrorResult (unchanged — gateway validation paths)", () => {

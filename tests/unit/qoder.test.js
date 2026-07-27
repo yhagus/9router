@@ -9,7 +9,7 @@
  *   - device flow URL construction
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "crypto";
 
 import { qoderEncodeBody } from "../../src/lib/qoder/encoding.js";
@@ -465,5 +465,52 @@ describe("wrapQoderSSE", () => {
     const r = new Response("not ok", { status: 500 });
     const wrapped = wrapQoderSSE(r, "qoder/auto");
     expect(wrapped).toBe(r);
+  });
+});
+
+describe("QoderExecutor.parseError", () => {
+  // Construct a lightweight executor instance to test parseError in isolation.
+  // BaseExecutor's constructor reads PROVIDERS[provider] for config; Qoder's
+  // entry exists in the registry so this works without mocking.
+  const { default: QoderExecutor } = qoderExecutorInternals;
+  // Re-import via the module's default export (already imported at top via __test__).
+  // We need the class itself — grab it from the module.
+  let executor;
+  beforeAll(async () => {
+    const mod = await import("../../open-sse/executors/qoder.js");
+    executor = new mod.default();
+  });
+
+  it("returns disableAccount: true for 403 (credit exhausted)", () => {
+    const fakeResponse = { status: 403 };
+    const bodyText = JSON.stringify({ error: { message: "credit exhausted" } });
+    const result = executor.parseError(fakeResponse, bodyText);
+    expect(result.status).toBe(403);
+    expect(result.disableAccount).toBe(true);
+    expect(result.message).toContain("credit exhausted");
+  });
+
+  it("falls through to base parseError for non-403 statuses", () => {
+    const fakeResponse = { status: 429 };
+    const bodyText = JSON.stringify({ error: { message: "rate limited" } });
+    const result = executor.parseError(fakeResponse, bodyText);
+    expect(result.status).toBe(429);
+    expect(result.disableAccount).toBeUndefined();
+  });
+
+  it("falls through to base for 500", () => {
+    const fakeResponse = { status: 500 };
+    const bodyText = "internal server error";
+    const result = executor.parseError(fakeResponse, bodyText);
+    expect(result.status).toBe(500);
+    expect(result.disableAccount).toBeUndefined();
+  });
+
+  it("falls through to base for 401", () => {
+    const fakeResponse = { status: 401 };
+    const bodyText = "unauthorized";
+    const result = executor.parseError(fakeResponse, bodyText);
+    expect(result.status).toBe(401);
+    expect(result.disableAccount).toBeUndefined();
   });
 });

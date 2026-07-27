@@ -231,9 +231,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  * @param {string} errorText
  * @param {string|null} provider
  * @param {string|null} model - The specific model that triggered the error
+ * @param {number|null} resetsAtMs - Provider-specific precise cooldown expiry
+ * @param {boolean} disableAccount - If true, permanently disable (isActive: false) instead of locking
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
-export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
+export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null, disableAccount = false) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
@@ -252,6 +254,30 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
 
   const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
   const lockUpdate = buildModelLockUpdate(model, cooldownMs);
+  const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
+
+  // Permanently disable the account (e.g. Qoder 403 = credits exhausted).
+  // The account won't be picked again until manually re-enabled from the dashboard.
+  // Still return shouldFallback: true so the system immediately tries the next account.
+  if (disableAccount) {
+    await updateProviderConnection(connectionId, {
+      ...lockUpdate,
+      isActive: false,
+      testStatus: "unavailable",
+      lastError: reason,
+      errorCode: status,
+      lastErrorAt: new Date().toISOString(),
+      backoffLevel: newBackoffLevel ?? backoffLevel
+    });
+
+    log.warn("AUTH", `${connName} DISABLED (isActive: false) [${status}] — ${reason}`);
+
+    if (provider && status && reason) {
+      console.error(`❌ ${provider} [${status}]: ${reason} — account disabled`);
+    }
+
+    return { shouldFallback: true, cooldownMs: 0 };
+  }
 
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
@@ -263,7 +289,6 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   });
 
   const lockKey = Object.keys(lockUpdate)[0];
-  const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
   log.warn("AUTH", `${connName} locked ${lockKey} for ${Math.round(cooldownMs / 1000)}s [${status}]`);
 
   if (provider && status && reason) {

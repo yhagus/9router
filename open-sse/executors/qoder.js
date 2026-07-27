@@ -445,6 +445,18 @@ export class QoderExecutor extends BaseExecutor {
   needsRefresh() {
     return false;
   }
+
+  // Qoder returns 403 (not 429) when credits/trial are exhausted. Unlike a
+  // rate limit (temporary cooldown), credit exhaustion is a permanent state
+  // that won't resolve in minutes. Flag the account for permanent disable
+  // so markAccountUnavailable sets isActive: false instead of a 2-min lock.
+  // The system still falls back to the next account immediately.
+  parseError(response, bodyText) {
+    if (response.status === 403) {
+      return { status: 403, message: bodyText || "Forbidden", disableAccount: true };
+    }
+    return super.parseError(response, bodyText);
+  }
 }
 
 export default QoderExecutor;
