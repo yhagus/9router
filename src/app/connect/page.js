@@ -85,7 +85,7 @@ export default function ConnectPage() {
         <div className="text-center mb-2">
           <h1 className="text-2xl font-bold text-text-main">Connect to 9Router</h1>
           <p className="text-sm text-text-muted mt-1">
-            OpenAI-compatible base URL and public API keys
+            OpenAI & Anthropic-compatible base URL and public API keys
           </p>
         </div>
 
@@ -108,7 +108,9 @@ export default function ConnectPage() {
             </div>
             <p className="text-xs text-text-muted">
               Use this as the API base in OpenAI-compatible clients (e.g.{" "}
-              <code className="bg-sidebar px-1 rounded">…/v1/chat/completions</code>).
+              <code className="bg-sidebar px-1 rounded">…/v1/chat/completions</code>) or
+              Anthropic-compatible clients (e.g.{" "}
+              <code className="bg-sidebar px-1 rounded">…/v1/messages</code>).
             </p>
           </div>
         </Card>

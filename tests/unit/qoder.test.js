@@ -453,11 +453,35 @@ describe("wrapQoderSSE", () => {
     expect(() => JSON.parse(dataLine.slice("data: ".length))).not.toThrow();
   });
 
-  it("upstream error envelope produces an error chunk + [DONE]", async () => {
+  it("upstream error envelope produces a generic error event + [DONE]", async () => {
     const env = JSON.stringify({ statusCodeValue: 503, body: "service unavailable" });
     const wrapped = wrapQoderSSE(makeResponse([`data: ${env}\n\n`]), "qoder/lite");
     const out = await drain(wrapped);
-    expect(out).toContain("[qoder error 503");
+    // Generic templated message — no provider name, no raw upstream body
+    expect(out).toContain("Service temporarily unavailable");
+    expect(out).not.toContain("qoder");
+    expect(out).not.toContain("service unavailable");
+    expect(out).toContain("data: [DONE]\n\n");
+  });
+
+  // Regression: Qoder returns 403 with a queued-request payload (code 10605).
+  // The raw body must never reach the client — only the generic template.
+  it("does not leak provider name or raw body for queued 403 errors (10605)", async () => {
+    const rawBody = JSON.stringify({
+      code: "10605",
+      message: JSON.stringify({ isQueued: true, modelKey: "qmodel_preview", queueCount: 36, queueType: "slow", serviceAvailable: false }),
+    });
+    const env = JSON.stringify({ statusCodeValue: 403, body: rawBody });
+    const wrapped = wrapQoderSSE(makeResponse([`data: ${env}\n\n`]), "qoder/auto");
+    const out = await drain(wrapped);
+    // Must not leak provider identity or raw upstream details
+    expect(out).not.toContain("qoder");
+    expect(out).not.toContain("isQueued");
+    expect(out).not.toContain("queueCount");
+    expect(out).not.toContain("qmodel_preview");
+    expect(out).not.toContain("10605");
+    // Must contain the generic templated 403 message
+    expect(out).toContain("You exceeded your current quota");
     expect(out).toContain("data: [DONE]\n\n");
   });
 

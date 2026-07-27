@@ -30,6 +30,7 @@ import { PROVIDERS } from "../config/providers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { SSE_DONE } from "../utils/sseConstants.js";
 import { FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { templateErrorMessage, buildErrorBody } from "../utils/error.js";
 import {
   QODER_CHAT_URL_ENCODED,
   QODER_MODEL_MAP,
@@ -223,7 +224,7 @@ async function buildQoderRequestBody({ model, body, credentials, log, proxyOptio
  * and re-emit as `data: <inner>\n\n`. Errors become `data: [DONE]\n\n` plus
  * a synthetic OpenAI error chunk.
  */
-function wrapQoderSSE(response, model) {
+function wrapQoderSSE(response, model, log = null) {
   if (!response.ok || !response.body) return response;
 
   const decoder = new TextDecoder();
@@ -252,15 +253,11 @@ function wrapQoderSSE(response, model) {
     const statusVal = typeof envelope.statusCodeValue === "number" ? envelope.statusCodeValue : 200;
     const inner = typeof envelope.body === "string" ? envelope.body : "";
     if (statusVal !== 200) {
-      const msg = inner || `upstream status ${statusVal}`;
-      const errChunk = JSON.stringify({
-        id: `qoder-error-${Date.now()}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{ index: 0, delta: { content: `\n[qoder error ${statusVal}: ${truncate(msg, 200)}]` }, finish_reason: "stop" }],
-      });
-      controller.enqueue(encoder.encode(`data: ${errChunk}\n\n`));
+      // Log raw error server-side for diagnosis; never expose to client.
+      log?.warn?.("QODER", `upstream SSE error ${statusVal}: ${truncate(inner, 300)}`);
+      // Emit a generic OpenAI-shaped error event — no provider name, no raw body.
+      const errorBody = buildErrorBody(statusVal, templateErrorMessage(statusVal));
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorBody)}\n\n`));
       controller.enqueue(encoder.encode(SSE_DONE));
       doneEmitted = true;
       return;
@@ -431,7 +428,7 @@ export class QoderExecutor extends BaseExecutor {
       return { response, url, headers, transformedBody: payload };
     }
 
-    const wrapped = wrapQoderSSE(response, `qoder/${qoderKey}`);
+    const wrapped = wrapQoderSSE(response, `qoder/${qoderKey}`, log);
     return { response: wrapped, url, headers, transformedBody: payload };
   }
 
