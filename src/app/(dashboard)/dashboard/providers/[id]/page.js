@@ -21,6 +21,7 @@ import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
+import BulkImportQoderModal from "./BulkImportQoderModal";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
 
@@ -47,6 +48,7 @@ export default function ProviderDetailPage() {
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
   const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
+  const [showBulkImportQoder, setShowBulkImportQoder] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditNodeModal, setShowEditNodeModal] = useState(false);
   const [showBulkProxyModal, setShowBulkProxyModal] = useState(false);
@@ -1486,6 +1488,11 @@ export default function ProviderDetailPage() {
                         {translate("Bulk Add")}
                       </Button>
                     )}
+                    {providerId === "qoder" && (
+                      <Button size="sm" icon="playlist_add" variant="secondary" onClick={() => setShowBulkImportQoder(true)}>
+                        Bulk Add
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       icon="add"
@@ -1553,6 +1560,18 @@ export default function ProviderDetailPage() {
                       className="w-full sm:w-auto"
                     >
                       {translate("Bulk Add")}
+                    </Button>
+                  )}
+                  {providerId === "qoder" && (
+                    <Button
+                      size="sm"
+                      icon="playlist_add"
+                      variant="secondary"
+                      onClick={() => setShowBulkImportQoder(true)}
+                      title="Bulk import Qoder device tokens"
+                      className="w-full sm:w-auto"
+                    >
+                      Bulk Add
                     </Button>
                   )}
                   {hasDualAuthModes ? (
@@ -1731,6 +1750,14 @@ export default function ProviderDetailPage() {
         <BulkImportCodexModal
           isOpen={showBulkImportCodex}
           onClose={() => setShowBulkImportCodex(false)}
+          onSuccess={fetchConnections}
+        />
+      )}
+
+      {providerId === "qoder" && (
+        <BulkImportQoderModal
+          isOpen={showBulkImportQoder}
+          onClose={() => setShowBulkImportQoder(false)}
           onSuccess={fetchConnections}
         />
       )}
