@@ -26,6 +26,10 @@ export const QODER_CHAT_URL = `${QODER_CHAT_BASE}/algo${QODER_CHAT_SIG_PATH}?Fet
 export const QODER_CHAT_URL_ENCODED = `${QODER_CHAT_URL}&Encode=1`;
 export const QODER_MODEL_LIST_URL = `${QODER_CHAT_BASE}/algo/api/v2/model/list`;
 
+// Qoder occasionally accepts an HTTP request then emits an in-stream 403
+// while its slow queue is full. Retry before exposing any output to clients.
+export const QODER_QUEUE_RETRY_DELAYS_MS = [2_000, 4_000, 8_000];
+
 // COSY header constants. These are not arbitrary — the upstream signature
 // validation matches them against the values used at signing time.
 export const QODER_IDE_VERSION = "1.0.0";

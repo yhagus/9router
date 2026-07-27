@@ -34,6 +34,7 @@ import { templateErrorMessage, buildErrorBody } from "../utils/error.js";
 import {
   QODER_CHAT_URL_ENCODED,
   QODER_MODEL_MAP,
+  QODER_QUEUE_RETRY_DELAYS_MS,
 } from "../shared/qoder/constants.js";
 import { getQoderModelConfig, resolveQoderModels } from "../services/qoderModels.js";
 
@@ -121,6 +122,144 @@ function stableChatRecordId(model, messages, tools, maxTokens) {
 
 function truncate(s, n) {
   return s && s.length > n ? `${s.slice(0, n)}...` : s || "";
+}
+
+function parseQoderErrorPayload(body) {
+  const pending = [body];
+  const visited = new Set();
+
+  while (pending.length > 0) {
+    const value = pending.shift();
+    if (typeof value === "string") {
+      try {
+        pending.push(JSON.parse(value));
+      } catch {
+        // Plain-text error bodies cannot contain Qoder's queue marker.
+      }
+      continue;
+    }
+    if (!value || typeof value !== "object" || visited.has(value)) continue;
+    visited.add(value);
+    if (value.isQueued === true) return value;
+    for (const key of ["body", "data", "error", "message"]) {
+      if (value[key] != null) pending.push(value[key]);
+    }
+  }
+
+  return null;
+}
+
+function isQoderQueuedError(status, body) {
+  return status === 403 && parseQoderErrorPayload(body) !== null;
+}
+
+function isQoderQueuedSSEData(data) {
+  try {
+    const envelope = JSON.parse(data);
+    const status = typeof envelope.statusCodeValue === "number" ? envelope.statusCodeValue : 200;
+    return isQoderQueuedError(status, envelope.body);
+  } catch {
+    return false;
+  }
+}
+
+function restoreResponse(response, chunks, reader) {
+  let chunkIndex = 0;
+  const body = new ReadableStream({
+    async pull(controller) {
+      if (chunkIndex < chunks.length) {
+        controller.enqueue(chunks[chunkIndex++]);
+        return;
+      }
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          reader.releaseLock();
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        try { reader.releaseLock(); } catch {}
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try { await reader.cancel(reason); } catch {}
+    },
+  });
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+// Qoder signals queue saturation as an error inside a successful HTTP SSE
+// response. Inspect the first event before any data reaches the client so the
+// request can be retried without duplicating streamed output.
+async function inspectInitialQoderSSE(response) {
+  if (!response.body) return { queued: false, response };
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks = [];
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      buffer += decoder.decode();
+      const trailing = buffer.replace(/\r$/, "");
+      if (trailing.startsWith("data:") && isQoderQueuedSSEData(trailing.slice(5).trimStart())) {
+        try { reader.releaseLock(); } catch {}
+        return { queued: true, response: null };
+      }
+      return { queued: false, response: restoreResponse(response, chunks, reader) };
+    }
+
+    chunks.push(value);
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIndex;
+    while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newlineIndex).replace(/\r$/, "");
+      buffer = buffer.slice(newlineIndex + 1);
+      if (!line.startsWith("data:")) continue;
+      if (isQoderQueuedSSEData(line.slice(5).trimStart())) {
+        await reader.cancel();
+        try { reader.releaseLock(); } catch {}
+        return { queued: true, response: null };
+      }
+
+      return { queued: false, response: restoreResponse(response, chunks, reader) };
+    }
+  }
+}
+
+function waitForQoderQueueRetry(delayMs, signal) {
+  if (signal?.aborted) throw signal.reason || new DOMException("Request aborted", "AbortError");
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(finish, delayMs);
+    function finish() {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }
+    function abort() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      reject(signal.reason || new DOMException("Request aborted", "AbortError"));
+    }
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function qoderQueueUnavailableResponse() {
+  return new Response(
+    JSON.stringify({ error: { message: "Qoder queue remains unavailable after retries" } }),
+    { status: 503, headers: { "Content-Type": "application/json" } },
+  );
 }
 
 /**
@@ -256,7 +395,8 @@ function wrapQoderSSE(response, model, log = null) {
       // Log raw error server-side for diagnosis; never expose to client.
       log?.warn?.("QODER", `upstream SSE error ${statusVal}: ${truncate(inner, 300)}`);
       // Emit a generic OpenAI-shaped error event — no provider name, no raw body.
-      const errorBody = buildErrorBody(statusVal, templateErrorMessage(statusVal));
+      const clientStatus = isQoderQueuedError(statusVal, inner) ? 503 : statusVal;
+      const errorBody = buildErrorBody(clientStatus, templateErrorMessage(clientStatus));
       controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorBody)}\n\n`));
       controller.enqueue(encoder.encode(SSE_DONE));
       doneEmitted = true;
@@ -355,81 +495,103 @@ export class QoderExecutor extends BaseExecutor {
       return { response: fakeResp, url, headers: {}, transformedBody: body };
     }
 
-    let qoderKey;
-    let payload;
-    try {
-      ({ qoderKey, payload } = await buildQoderRequestBody({ model, body, credentials, log, proxyOptions, signal }));
-    } catch (err) {
-      const fakeResp = new Response(
-        JSON.stringify({ error: { message: err.message } }),
-        { status: 400, headers: { "Content-Type": "application/json" } },
-      );
-      return { response: fakeResp, url, headers: {}, transformedBody: body };
+    for (let queueAttempt = 0; ; queueAttempt++) {
+      let qoderKey;
+      let payload;
+      try {
+        ({ qoderKey, payload } = await buildQoderRequestBody({ model, body, credentials, log, proxyOptions, signal }));
+      } catch (err) {
+        const fakeResp = new Response(
+          JSON.stringify({ error: { message: err.message } }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+        return { response: fakeResp, url, headers: {}, transformedBody: body };
+      }
+
+      const plainBody = Buffer.from(JSON.stringify(payload), "utf8");
+      const encodedBodyStr = qoderEncodeBody(plainBody);
+      const encodedBodyBuf = Buffer.from(encodedBodyStr, "latin1");
+
+      let cosyHeaders;
+      try {
+        cosyHeaders = buildCosyHeaders(
+          encodedBodyBuf,
+          url,
+          {
+            userId: psd.userId,
+            authToken: credentials.accessToken,
+            name: credentials.displayName || "",
+            email: credentials.email || "",
+            machineId: psd.machineId || "",
+          },
+        );
+      } catch (err) {
+        // cosy.js throws synchronously on missing userId/authToken — surface
+        // as 401 so chatCore prompts re-auth instead of returning a 500.
+        const fakeResp = new Response(
+          JSON.stringify({ error: { message: `qoder cosy signing failed: ${err.message}` } }),
+          { status: 401, headers: { "Content-Type": "application/json" } },
+        );
+        return { response: fakeResp, url, headers: {}, transformedBody: body };
+      }
+
+      const modelSource = (payload.model_config && payload.model_config.source) || "system";
+      const headers = {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Model-Key": qoderKey,
+        "X-Model-Source": modelSource,
+        // gzip triggers signature validation on Qoder's CDN; force identity.
+        "Accept-Encoding": "identity",
+        ...cosyHeaders,
+      };
+
+      // Abort if upstream doesn't return response headers within connect timeout.
+      const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
+      const connectCtrl = new AbortController();
+      const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
+      const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
+
+      let response;
+      try {
+        response = await proxyAwareFetch(
+          url,
+          { method: "POST", headers, body: encodedBodyBuf, signal: mergedSignal },
+          proxyOptions,
+        );
+      } finally {
+        clearTimeout(connectTimer);
+      }
+
+      let queued = false;
+      if (!response.ok) {
+        const errorBody = await response.clone().text().catch(() => "");
+        queued = isQoderQueuedError(response.status, errorBody);
+      } else {
+        const inspected = await inspectInitialQoderSSE(response);
+        queued = inspected.queued;
+        response = inspected.response;
+      }
+
+      if (queued) {
+        const delayMs = QODER_QUEUE_RETRY_DELAYS_MS[queueAttempt];
+        if (delayMs == null) {
+          return { response: qoderQueueUnavailableResponse(), url, headers, transformedBody: payload };
+        }
+        log?.warn?.("QODER", `upstream queue full; retrying ${queueAttempt + 1}/${QODER_QUEUE_RETRY_DELAYS_MS.length} after ${delayMs / 1000}s`);
+        await waitForQoderQueueRetry(delayMs, signal);
+        continue;
+      }
+
+      if (!response.ok) {
+        // Pass non-queue errors through unchanged so chatCore can classify them.
+        return { response, url, headers, transformedBody: payload };
+      }
+
+      const wrapped = wrapQoderSSE(response, `qoder/${qoderKey}`, log);
+      return { response: wrapped, url, headers, transformedBody: payload };
     }
-
-    const plainBody = Buffer.from(JSON.stringify(payload), "utf8");
-    const encodedBodyStr = qoderEncodeBody(plainBody);
-    const encodedBodyBuf = Buffer.from(encodedBodyStr, "latin1");
-
-    let cosyHeaders;
-    try {
-      cosyHeaders = buildCosyHeaders(
-        encodedBodyBuf,
-        url,
-        {
-          userId: psd.userId,
-          authToken: credentials.accessToken,
-          name: credentials.displayName || "",
-          email: credentials.email || "",
-          machineId: psd.machineId || "",
-        },
-      );
-    } catch (err) {
-      // cosy.js throws synchronously on missing userId/authToken — surface
-      // as 401 so chatCore prompts re-auth instead of returning a 500.
-      const fakeResp = new Response(
-        JSON.stringify({ error: { message: `qoder cosy signing failed: ${err.message}` } }),
-        { status: 401, headers: { "Content-Type": "application/json" } },
-      );
-      return { response: fakeResp, url, headers: {}, transformedBody: body };
-    }
-
-    const modelSource = (payload.model_config && payload.model_config.source) || "system";
-    const headers = {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      "Cache-Control": "no-cache",
-      "X-Model-Key": qoderKey,
-      "X-Model-Source": modelSource,
-      // gzip triggers signature validation on Qoder's CDN; force identity.
-      "Accept-Encoding": "identity",
-      ...cosyHeaders,
-    };
-
-    // Abort if upstream doesn't return response headers within connect timeout.
-    const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
-    const connectCtrl = new AbortController();
-    const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
-    const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
-
-    let response;
-    try {
-      response = await proxyAwareFetch(
-        url,
-        { method: "POST", headers, body: encodedBodyBuf, signal: mergedSignal },
-        proxyOptions,
-      );
-    } finally {
-      clearTimeout(connectTimer);
-    }
-
-    if (!response.ok) {
-      // Pass error response through unchanged so chatCore can capture it.
-      return { response, url, headers, transformedBody: payload };
-    }
-
-    const wrapped = wrapQoderSSE(response, `qoder/${qoderKey}`, log);
-    return { response: wrapped, url, headers, transformedBody: payload };
   }
 
   // Qoder device tokens don't refresh through OAuth — the upstream returns
@@ -449,7 +611,7 @@ export class QoderExecutor extends BaseExecutor {
   // so markAccountUnavailable sets isActive: false instead of a 2-min lock.
   // The system still falls back to the next account immediately.
   parseError(response, bodyText) {
-    if (response.status === 403) {
+    if (response.status === 403 && !isQoderQueuedError(response.status, bodyText)) {
       return { status: 403, message: bodyText || "Forbidden", disableAccount: true };
     }
     return super.parseError(response, bodyText);
@@ -464,4 +626,6 @@ export const __test__ = {
   normalizeMessages,
   wrapQoderSSE,
   buildQoderRequestBody,
+  isQoderQueuedError,
+  inspectInitialQoderSSE,
 };

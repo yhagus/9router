@@ -370,7 +370,7 @@ describe("normalizeMessages", () => {
 });
 
 describe("wrapQoderSSE", () => {
-  const { wrapQoderSSE } = qoderExecutorInternals;
+  const { wrapQoderSSE, inspectInitialQoderSSE } = qoderExecutorInternals;
 
   // Helper: build a fake Response carrying the given lines as the body.
   function makeResponse(lines, { status = 200 } = {}) {
@@ -405,6 +405,36 @@ describe("wrapQoderSSE", () => {
     const out = await drain(wrapped);
     expect(out).toContain(`data: ${inner}\n\n`);
     expect(out).toContain("data: [DONE]\n\n");
+  });
+
+  it("preserves the initial SSE event after queue inspection", async () => {
+    const inner = JSON.stringify({ choices: [{ delta: { content: "hi" } }] });
+    const upstream = `data: ${JSON.stringify({ statusCodeValue: 200, body: inner })}\n\n`;
+    const inspected = await inspectInitialQoderSSE(makeResponse([upstream]));
+
+    expect(inspected.queued).toBe(false);
+    const out = await drain(wrapQoderSSE(inspected.response, "qoder/auto"));
+    expect(out).toContain(`data: ${inner}\n\n`);
+  });
+
+  it("detects Qoder's nested queue-full 403 before streaming output", async () => {
+    const rawBody = JSON.stringify({
+      code: "10605",
+      message: JSON.stringify({ isQueued: true, queueType: "slow", serviceAvailable: false }),
+    });
+    const upstream = `data: ${JSON.stringify({ statusCodeValue: 403, body: rawBody })}\n\n`;
+    const inspected = await inspectInitialQoderSSE(makeResponse([upstream]));
+
+    expect(inspected.queued).toBe(true);
+    expect(inspected.response).toBeNull();
+  });
+
+  it("detects a queue-full first event without a trailing newline", async () => {
+    const rawBody = JSON.stringify({ message: JSON.stringify({ isQueued: true }) });
+    const upstream = `data: ${JSON.stringify({ statusCodeValue: 403, body: rawBody })}`;
+    const inspected = await inspectInitialQoderSSE(makeResponse([upstream]));
+
+    expect(inspected.queued).toBe(true);
   });
 
   // Regression for review finding #4: a final data: line without a trailing
@@ -464,8 +494,8 @@ describe("wrapQoderSSE", () => {
     expect(out).toContain("data: [DONE]\n\n");
   });
 
-  // Regression: Qoder returns 403 with a queued-request payload (code 10605).
-  // The raw body must never reach the client — only the generic template.
+  // A queue-full error arriving after output began cannot be safely retried,
+  // but it must still be presented as temporary unavailability, not quota.
   it("does not leak provider name or raw body for queued 403 errors (10605)", async () => {
     const rawBody = JSON.stringify({
       code: "10605",
@@ -480,8 +510,7 @@ describe("wrapQoderSSE", () => {
     expect(out).not.toContain("queueCount");
     expect(out).not.toContain("qmodel_preview");
     expect(out).not.toContain("10605");
-    // Must contain the generic templated 403 message
-    expect(out).toContain("You exceeded your current quota");
+    expect(out).toContain("Service temporarily unavailable");
     expect(out).toContain("data: [DONE]\n\n");
   });
 
@@ -512,6 +541,16 @@ describe("QoderExecutor.parseError", () => {
     expect(result.status).toBe(403);
     expect(result.disableAccount).toBe(true);
     expect(result.message).toContain("credit exhausted");
+  });
+
+  it("does not disable queued 403 responses", () => {
+    const fakeResponse = { status: 403 };
+    const bodyText = JSON.stringify({
+      code: "10605",
+      message: JSON.stringify({ isQueued: true, queueType: "slow" }),
+    });
+    const result = executor.parseError(fakeResponse, bodyText);
+    expect(result.disableAccount).toBeUndefined();
   });
 
   it("falls through to base parseError for non-403 statuses", () => {
