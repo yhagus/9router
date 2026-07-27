@@ -3,7 +3,7 @@
  */
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
-import { unavailableResponse } from "../utils/error.js";
+import { unavailableResponse, templateErrorMessage } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 
@@ -259,12 +259,20 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         return result;
       }
 
-      // Extract error info from response
-      let errorText = result.statusText || "";
+      // Extract error info from response.
+      // Prefer the raw upstream message (attached by createUpstreamErrorResult) —
+      // the client-facing body is now templated, so parsing it would lose the
+      // provider-specific text ("overloaded", "capacity"…) that ERROR_RULES
+      // matches on for fallback classification.
+      let errorText = result.upstreamError?.message || result.statusText || "";
       let retryAfter = null;
       try {
         const errorBody = await result.clone().json();
-        errorText = errorBody?.error?.message || errorBody?.error || errorBody?.message || errorText;
+        // Fall back to body only when no raw upstream message is attached
+        // (e.g. gateway errors like "No active credentials").
+        if (!result.upstreamError) {
+          errorText = errorBody?.error?.message || errorBody?.error || errorBody?.message || errorText;
+        }
         retryAfter = errorBody?.retryAfter || null;
       } catch {
         // Ignore JSON parse errors
@@ -315,15 +323,17 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
   // or have no active credentials. 503 is more accurate and retryable by clients.
   const allDisabled = lastError && lastError.toLowerCase().includes("no credentials");
   const status = allDisabled ? 503 : (lastStatus || 503);
-  const msg = lastError || "All combo models unavailable";
+  // Gateway-caused "no credentials" keeps its specific message; provider-caused
+  // errors get a generic status-code-templated message (raw text stays in logs).
+  const msg = allDisabled ? (lastError || "All combo models unavailable") : templateErrorMessage(status);
 
   if (earliestRetryAfter) {
     const retryHuman = formatRetryAfter(earliestRetryAfter);
-    log.warn("COMBO", `All models failed | ${msg} (${retryHuman})`);
+    log.warn("COMBO", `All models failed | ${lastError || msg} (${retryHuman})`);
     return unavailableResponse(status, msg, earliestRetryAfter, retryHuman);
   }
 
-  log.warn("COMBO", `All models failed | ${msg}`);
+  log.warn("COMBO", `All models failed | ${lastError || msg}`);
   return new Response(
     JSON.stringify({ error: { message: msg } }),
     { status, headers: { "Content-Type": "application/json" } }

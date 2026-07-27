@@ -1,6 +1,24 @@
 import { ERROR_TYPES, DEFAULT_ERROR_MESSAGES } from "../config/errorConfig.js";
 
 /**
+ * Generic client-facing error message for a given HTTP status code.
+ * Used to avoid disclosing raw upstream provider error text to clients while
+ * keeping the status code (which clients react to programmatically) unchanged.
+ *
+ * Falls back to the 502 message for unmapped 5xx codes and the 400 message
+ * for unmapped 4xx codes (e.g. Cloudflare 522/524, Anthropic 529).
+ *
+ * @param {number} statusCode - HTTP status code
+ * @returns {string} Templated message
+ */
+export function templateErrorMessage(statusCode) {
+  if (DEFAULT_ERROR_MESSAGES[statusCode]) return DEFAULT_ERROR_MESSAGES[statusCode];
+  if (statusCode >= 500) return DEFAULT_ERROR_MESSAGES[502];
+  if (statusCode >= 400) return DEFAULT_ERROR_MESSAGES[400];
+  return DEFAULT_ERROR_MESSAGES[503];
+}
+
+/**
  * Build OpenAI-compatible error response body
  * @param {number} statusCode - HTTP status code
  * @param {string} message - Error message
@@ -102,6 +120,42 @@ export function createErrorResult(statusCode, message, resetsAtMs) {
     error: message,
     resetsAtMs,
     response: errorResponse(statusCode, message)
+  };
+}
+
+/**
+ * Create error result for provider-caused errors (upstream non-2xx, fetch
+ * failures, HTML error pages).
+ *
+ * Differs from createErrorResult in that the CLIENT-facing Response body uses
+ * a generic status-code-templated message (see templateErrorMessage) so raw
+ * provider text is never disclosed to end users, while the internal `error`
+ * field keeps the original provider message — which is required for:
+ *   - markAccountUnavailable / checkFallbackError text classification
+ *     (ERROR_RULES: "overloaded", "capacity", "quota exceeded"…)
+ *   - server logs & request detail persistence
+ *
+ * The raw message is also attached as a plain (non-enumerated for HTTP) JS
+ * property `response.upstreamError = { status, message }` so that combo.js can
+ * classify fallback decisions from the raw text without re-parsing the now-
+ * templated response body.
+ *
+ * @param {number} statusCode - HTTP status code (passed through unchanged)
+ * @param {string} rawMessage - Original provider error message (internal only)
+ * @param {number} [resetsAtMs] - Optional precise cooldown expiry (ms epoch)
+ * @returns {{ success: false, status: number, error: string, response: Response, resetsAtMs?: number }}
+ */
+export function createUpstreamErrorResult(statusCode, rawMessage, resetsAtMs) {
+  const response = errorResponse(statusCode, templateErrorMessage(statusCode));
+  // Plain property on the Response object — never serialized into the HTTP body,
+  // but readable in-process (e.g. by combo fallback classification).
+  response.upstreamError = { status: statusCode, message: rawMessage };
+  return {
+    success: false,
+    status: statusCode,
+    error: rawMessage,
+    resetsAtMs,
+    response
   };
 }
 

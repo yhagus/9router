@@ -14,7 +14,7 @@ import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
-import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
+import { errorResponse, unavailableResponse, templateErrorMessage } from "open-sse/utils/error.js";
 import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -223,17 +223,23 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
-        const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-        log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
-        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+        const rawError = lastError || credentials.lastError || "Unavailable";
+        log.warn("CHAT", `[${provider}/${model}] ${rawError} (${credentials.retryAfterHuman})`);
+        const resp = unavailableResponse(status, templateErrorMessage(status), credentials.retryAfter, credentials.retryAfterHuman);
+        // Attach raw error for in-process combo classification (not serialized to client).
+        resp.upstreamError = { status, message: rawError };
+        return resp;
       }
       if (excludeConnectionIds.size === 0) {
         log.warn("AUTH", `No active credentials for provider: ${provider}`);
         return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`);
       }
       log.warn("CHAT", "No more accounts available", { provider });
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
+      const exhaustStatus = lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE;
+      const resp = errorResponse(exhaustStatus, templateErrorMessage(exhaustStatus));
+      resp.upstreamError = { status: exhaustStatus, message: lastError || "All accounts unavailable" };
+      return resp;
     }
 
     // Account selection shown in the unified "▶" line (acc:...)
