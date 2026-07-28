@@ -4,30 +4,27 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button, Modal } from "@/shared/components";
 
-const PLACEHOLDER = `[
-  { "pat": "pt-..." },
-  { "pat": "pt-...", "name": "Account 2" },
-  { "deviceToken": "dt-...", "userId": "user-001" }
-]`;
+const PLACEHOLDER = `pt-abc123...
+pt-def456...
+pt-ghi789...`;
 
-function normalizeToArray(parsed) {
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed && typeof parsed === "object") {
-    if (Array.isArray(parsed.accounts)) return parsed.accounts;
-    return [parsed];
-  }
-  return null;
+function parseLines(text) {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((pat) => ({ pat }));
 }
 
 export default function BulkImportQoderModal({ isOpen, onClose, onSuccess }) {
-  const [jsonText, setJsonText] = useState("");
+  const [inputText, setInputText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [parseError, setParseError] = useState("");
   const [result, setResult] = useState(null);
 
   const handleClose = () => {
     if (submitting) return;
-    setJsonText("");
+    setInputText("");
     setParseError("");
     setResult(null);
     onClose();
@@ -37,22 +34,8 @@ export default function BulkImportQoderModal({ isOpen, onClose, onSuccess }) {
     setParseError("");
     setResult(null);
 
-    const trimmed = jsonText.trim();
-    if (!trimmed) return;
-
-    let parsed;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch (err) {
-      setParseError(`Invalid JSON: ${err.message}`);
-      return;
-    }
-
-    const accounts = normalizeToArray(parsed);
-    if (!accounts || accounts.length === 0) {
-      setParseError("No accounts found in input");
-      return;
-    }
+    const accounts = parseLines(inputText);
+    if (accounts.length === 0) return;
 
     setSubmitting(true);
     try {
@@ -83,21 +66,15 @@ export default function BulkImportQoderModal({ isOpen, onClose, onSuccess }) {
     <Modal isOpen={isOpen} title="Bulk Add Qoder Accounts" onClose={handleClose}>
       <div className="flex flex-col gap-4">
         <p className="text-xs text-text-muted">
-          Paste a JSON array of Qoder accounts. Prefer{" "}
-          <code className="bg-sidebar px-1 rounded">pat</code> (Personal Access
-          Token) — same as qodercli: exchanged server-side for a session token.
-          Or pass{" "}
-          <code className="bg-sidebar px-1 rounded">deviceToken</code> +{" "}
-          <code className="bg-sidebar px-1 rounded">userId</code> from a browser
-          device login.{" "}
-          <code className="bg-sidebar px-1 rounded">machineId</code> is optional.
+          Paste one Personal Access Token (PAT) per line — same as qodercli.
+          Each token is exchanged server-side for a session token.
         </p>
 
         <textarea
           className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[200px] focus:outline-none focus:ring-1 focus:ring-primary"
           placeholder={PLACEHOLDER}
-          value={jsonText}
-          onChange={(e) => setJsonText(e.target.value)}
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
           disabled={submitting}
         />
 
@@ -131,7 +108,7 @@ export default function BulkImportQoderModal({ isOpen, onClose, onSuccess }) {
           <Button
             onClick={handleSubmit}
             fullWidth
-            disabled={submitting || !jsonText.trim()}
+            disabled={submitting || !inputText.trim()}
           >
             {submitting ? "Importing..." : "Import All"}
           </Button>
