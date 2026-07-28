@@ -9,7 +9,7 @@
  *   - device flow URL construction
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import crypto from "crypto";
 
 import { qoderEncodeBody } from "../../src/lib/qoder/encoding.js";
@@ -142,6 +142,69 @@ describe("initiateDeviceFlow", () => {
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     expect(flow.nonce).toMatch(uuidRe);
     expect(flow.machineId).toMatch(uuidRe);
+  });
+});
+
+describe("loginWithPAT / exchangeQoderPat", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("exchanges personal_token and returns session + userId", async () => {
+    const calls = [];
+    globalThis.fetch = async (url, init = {}) => {
+      calls.push({ url: String(url), method: init.method || "GET", body: init.body });
+      if (String(url).includes("/jobToken/exchange")) {
+        return new Response(
+          JSON.stringify({
+            token: "dt-session-from-pat",
+            refresh_token: "rt-from-pat",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (String(url).includes("/userinfo")) {
+        return new Response(
+          JSON.stringify({
+            uid: "user-from-pat",
+            name: "Pat User",
+            email: "pat@example.com",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const result = await new QoderService().loginWithPAT("pt-test-pat-token");
+    expect(result.accessToken).toBe("dt-session-from-pat");
+    expect(result.refreshToken).toBe("rt-from-pat");
+    expect(result.userId).toBe("user-from-pat");
+    expect(result.name).toBe("Pat User");
+    expect(result.email).toBe("pat@example.com");
+    expect(result.personalAccessToken).toBe("pt-test-pat-token");
+    expect(result.expireTime).toBeGreaterThan(Date.now());
+
+    const exchangeCall = calls.find((c) => c.url.includes("/jobToken/exchange"));
+    expect(exchangeCall).toBeDefined();
+    expect(exchangeCall.method).toBe("POST");
+    expect(JSON.parse(exchangeCall.body)).toEqual({ personal_token: "pt-test-pat-token" });
+  });
+
+  it("rejects empty PAT", async () => {
+    await expect(new QoderService().loginWithPAT("")).rejects.toThrow(/missing/i);
+  });
+
+  it("surfaces upstream exchange errors", async () => {
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ message: "invalid token" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    await expect(new QoderService().loginWithPAT("pt-bad")).rejects.toThrow(/invalid token/i);
   });
 });
 

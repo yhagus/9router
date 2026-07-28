@@ -128,25 +128,27 @@ export default function QuotaTable({
   const pageStart = sortedQuotas.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const pageEnd = Math.min(page * PAGE_SIZE, sortedQuotas.length);
 
-  const cellPad = compact ? "py-1 px-1.5" : "py-2 px-3";
-  const nameText = compact ? "text-[11px]" : "text-sm";
-  const resetPrimary = compact ? "text-[11px]" : "text-sm";
-  const resetSecondary = compact ? "text-[10px] leading-tight" : "text-xs";
+  const cellPad = compact ? "py-0.5 px-1" : "py-2 px-3";
+  const nameText = compact ? "text-[10px]" : "text-sm";
+  const resetPrimary = compact ? "text-[10px]" : "text-sm";
+  const resetSecondary = compact ? "text-[9px] leading-tight" : "text-xs";
   const sortLabel = "Sorted by account remaining";
   const hasHideAction = typeof onHideQuota === "function";
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[10px] text-text-muted">
-          {sortedQuotas.length} quota{sortedQuotas.length > 1 ? "s" : ""}
-        </div>
-        {showSortLabel && (
-          <div className="rounded-md border border-black/10 bg-black/[0.02] px-2 py-1 text-[10px] text-text-muted dark:border-white/10 dark:bg-white/[0.03]">
-            {sortLabel}
+    <div className={compact ? "space-y-1" : "space-y-2"}>
+      {!compact && (
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[10px] text-text-muted">
+            {sortedQuotas.length} quota{sortedQuotas.length > 1 ? "s" : ""}
           </div>
-        )}
-      </div>
+          {showSortLabel && (
+            <div className="rounded-md border border-black/10 bg-black/[0.02] px-2 py-1 text-[10px] text-text-muted dark:border-white/10 dark:bg-white/[0.03]">
+              {sortLabel}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full table-fixed text-left">
@@ -167,8 +169,8 @@ export default function QuotaTable({
                   className="border-b border-black/5 dark:border-white/5 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
                 >
                   <td className={`${cellPad} w-[30%]`}>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-[10px] shrink-0">{colors.emoji}</span>
+                    <div className="flex items-center gap-1 min-w-0">
+                      {!compact && <span className="text-[10px] shrink-0">{colors.emoji}</span>}
                       <span className={`${nameText} font-medium text-text-primary truncate`}>
                         {quota.name}
                       </span>
@@ -176,8 +178,8 @@ export default function QuotaTable({
                   </td>
 
                   <td className={`${cellPad} w-[45%]`}>
-                    <div className={compact ? "space-y-1" : "space-y-1.5"}>
-                      <div className={`${compact ? "h-1" : "h-1.5"} rounded-full overflow-hidden border ${colors.bgLight} ${
+                    <div className={compact ? "space-y-0.5" : "space-y-1.5"}>
+                      <div className={`${compact ? "h-[3px]" : "h-1.5"} rounded-full overflow-hidden border ${colors.bgLight} ${
                         quota.remaining === 0 ? "border-black/10 dark:border-white/10" : "border-transparent"
                       }`}>
                         <div
@@ -186,7 +188,7 @@ export default function QuotaTable({
                         />
                       </div>
 
-                      <div className={`flex items-center justify-between ${compact ? "text-[10px]" : "text-xs"}`}>
+                      <div className={`flex items-center justify-between ${compact ? "text-[9px]" : "text-xs"}`}>
                         <span className="text-text-muted">
                           {quota.used.toLocaleString()} / {quota.total > 0 ? quota.total.toLocaleString() : "∞"}
                         </span>
@@ -226,15 +228,15 @@ export default function QuotaTable({
                   </td>
 
                   {hasHideAction && (
-                    <td className={`${cellPad} w-[5%] text-right`}>
+                    <td className={`${cellPad} w-[4%] text-center`}>
                       <button
                         type="button"
                         onClick={() => onHideQuota(quota)}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-black/5 hover:text-text-primary dark:hover:bg-white/5"
+                        className="inline-flex items-center justify-center rounded text-text-muted/50 transition-colors hover:text-text-primary dark:hover:text-text-primary"
                         title="Hide this quota row"
                         aria-label={`Hide quota ${quota.name}`}
                       >
-                        <span className="material-symbols-outlined text-[15px]">
+                        <span className="material-symbols-outlined text-[9px]">
                           visibility_off
                         </span>
                       </button>

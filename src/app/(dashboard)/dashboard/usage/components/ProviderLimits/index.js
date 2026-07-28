@@ -152,6 +152,7 @@ export default function ProviderLimits() {
   const [quotaVisibility, setQuotaVisibility] = useState({});
   const [expiringFirst, setExpiringFirst] = useState(false);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
+  const [cardMenuOpenId, setCardMenuOpenId] = useState(null);
   const [bulkToggling, setBulkToggling] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(CONNECTIONS_PAGE_SIZE);
@@ -1019,7 +1020,7 @@ export default function ProviderLimits() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
         {sortedConnections.map((conn) => {
           const quota = quotaData[conn.id];
           const isLoading = loading[conn.id];
@@ -1041,14 +1042,14 @@ export default function ProviderLimits() {
               padding="none"
               className={`min-w-0 ${isInactive ? "opacity-60" : ""}`}
             >
-              <div className="px-3 py-2 border-b border-black/10 dark:border-white/10">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
+              <div className="px-2 py-1.5 border-b border-black/10 dark:border-white/10">
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="w-5 h-5 shrink-0 rounded flex items-center justify-center overflow-hidden">
                       <ProviderIcon
                         src={`/providers/${conn.provider}.png`}
                         alt={conn.provider}
-                        size={32}
+                        size={20}
                         className="object-contain"
                         fallbackText={
                           conn.provider?.slice(0, 2).toUpperCase() || "PR"
@@ -1056,16 +1057,16 @@ export default function ProviderLimits() {
                       />
                     </div>
                     <div className="min-w-0">
-                      <h3 className="text-sm font-semibold text-text-primary capitalize truncate">
+                      <h3 className="text-xs font-semibold text-text-primary capitalize truncate">
                         {conn.provider}
                       </h3>
                       {getConnectionLabel(conn) ? (
-                        <p className="text-xs text-text-muted truncate">
+                        <p className="text-[11px] text-text-muted truncate">
                           {getConnectionLabel(conn)}
                         </p>
                       ) : null}
                       {getConnectionSecondaryLabel(conn) ? (
-                        <p className="text-[11px] text-text-muted/80 truncate">
+                        <p className="text-[10px] text-text-muted/80 truncate">
                           {getConnectionSecondaryLabel(conn)}
                         </p>
                       ) : null}
@@ -1113,109 +1114,98 @@ export default function ProviderLimits() {
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
-                    {isCodex && (
-                      <>
-                        <Tooltip
-                          text={
-                            resetCreditCount > 0
-                              ? `Use one Codex reset credit. Available: ${resetCreditCount}`
-                              : "No Codex reset credits available"
-                          }
-                        >
+                    {/* Actions dropdown */}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setCardMenuOpenId(cardMenuOpenId === conn.id ? null : conn.id)}
+                        disabled={rowBusy}
+                        aria-label="Connection actions"
+                        aria-haspopup="menu"
+                        aria-expanded={cardMenuOpenId === conn.id}
+                        className="flex h-5 w-5 items-center justify-center rounded text-text-muted transition-colors hover:bg-black/5 hover:text-text-primary disabled:opacity-50 dark:hover:bg-white/5"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">more_vert</span>
+                      </button>
+
+                      {cardMenuOpenId === conn.id && (
+                        <>
                           <button
                             type="button"
-                            onClick={() => setResetConfirmState({ connection: conn, resetCreditCount })}
-                            disabled={resetCreditCount <= 0 || isLoading || rowBusy}
-                            aria-label={
-                              resetCreditCount > 0
-                                ? `Use one Codex reset credit. ${resetCreditCount} available.`
-                                : "No Codex reset credits available"
-                            }
-                            className={`flex h-8 min-w-10 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-medium tabular-nums transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/60 disabled:cursor-not-allowed disabled:opacity-60 ${
-                              resetCreditCount > 0
-                                ? "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
-                                : "border-black/10 bg-black/[0.02] text-text-muted dark:border-white/10 dark:bg-white/[0.03]"
-                            }`}
-                          >
-                            <span className={`material-symbols-outlined text-[15px] ${isResettingLimit ? "animate-spin" : ""}`}>
-                              {isResettingLimit ? "progress_activity" : "restart_alt"}
-                            </span>
-                            <span>{resetCreditCount}</span>
-                          </button>
-                        </Tooltip>
-                        <Tooltip text="View Codex reset credit expiry">
-                          <button
-                            type="button"
-                            onClick={() => handleViewCodexResetCredits(conn)}
-                            disabled={isLoading || rowBusy}
-                            aria-label="View Codex reset credit expiry"
-                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 text-text-muted transition-colors hover:bg-black/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
-                          >
-                            <span className="material-symbols-outlined text-[17px]">schedule</span>
-                          </button>
-                        </Tooltip>
-                      </>
-                    )}
-                    {AUTO_PING_SETTINGS_KEYS[conn.provider] && conn.authType === "oauth" && (
-                      <Tooltip text={AUTO_PING_TOOLTIPS[conn.provider]}>
-                        <button
-                          type="button"
-                          onClick={() => toggleAutoPing(conn.id, conn.provider, !(autoPingMaps[conn.provider]?.[conn.id] === true))}
-                          aria-label="Toggle auto-ping"
-                          className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-black/5 dark:hover:bg-white/5 ${autoPingMaps[conn.provider]?.[conn.id] === true ? "text-primary" : "text-text-muted"}`}
-                        >
-                          <span className="material-symbols-outlined text-[18px]">bolt</span>
-                        </button>
-                      </Tooltip>
-                    )}
-                    <Tooltip text="Refresh quota">
-                      <button
-                        type="button"
-                        onClick={() => refreshProvider(conn.id, conn.provider)}
-                        disabled={isLoading || rowBusy}
-                        aria-label="Refresh quota"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50"
-                      >
-                        <span
-                          className={`material-symbols-outlined text-[18px] text-text-muted ${isLoading ? "animate-spin" : ""}`}
-                        >
-                          refresh
-                        </span>
-                      </button>
-                    </Tooltip>
-                    <Tooltip text="Edit connection">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedConnection(conn);
-                          setShowEditModal(true);
-                        }}
-                        disabled={rowBusy}
-                        aria-label="Edit connection"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary transition-colors disabled:opacity-50"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">
-                          edit
-                        </span>
-                      </button>
-                    </Tooltip>
-                    <Tooltip text="Delete connection">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteConnection(conn.id)}
-                        disabled={rowBusy}
-                        aria-label="Delete connection"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-red-500/10 text-red-500 transition-colors disabled:opacity-50"
-                      >
-                        <span
-                          className={`material-symbols-outlined text-[18px] ${deletingId === conn.id ? "animate-pulse" : ""}`}
-                        >
-                          delete
-                        </span>
-                      </button>
-                    </Tooltip>
+                            className="fixed inset-0 z-30 bg-transparent"
+                            aria-label="Close menu"
+                            onClick={() => setCardMenuOpenId(null)}
+                          />
+                          <div className="absolute right-0 z-40 mt-1 w-44 overflow-hidden rounded-xl border border-black/10 bg-surface/95 p-1 shadow-xl shadow-black/10 backdrop-blur dark:border-white/10 dark:bg-surface/95">
+                            {isCodex && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => { setCardMenuOpenId(null); setResetConfirmState({ connection: conn, resetCreditCount }); }}
+                                  disabled={resetCreditCount <= 0 || isLoading}
+                                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/5"
+                                >
+                                  <span className={`material-symbols-outlined text-[14px] ${isResettingLimit ? "animate-spin" : ""}`}>
+                                    {isResettingLimit ? "progress_activity" : "restart_alt"}
+                                  </span>
+                                  <span>Reset limit</span>
+                                  <span className="ml-auto text-[10px] tabular-nums text-text-muted">{resetCreditCount}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setCardMenuOpenId(null); handleViewCodexResetCredits(conn); }}
+                                  disabled={isLoading}
+                                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/5"
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">schedule</span>
+                                  <span>Reset credits</span>
+                                </button>
+                              </>
+                            )}
+                            {AUTO_PING_SETTINGS_KEYS[conn.provider] && conn.authType === "oauth" && (
+                              <button
+                                type="button"
+                                onClick={() => { setCardMenuOpenId(null); toggleAutoPing(conn.id, conn.provider, !(autoPingMaps[conn.provider]?.[conn.id] === true)); }}
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-text-primary transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                              >
+                                <span className={`material-symbols-outlined text-[14px] ${autoPingMaps[conn.provider]?.[conn.id] === true ? "text-primary" : ""}`}>bolt</span>
+                                <span>{autoPingMaps[conn.provider]?.[conn.id] === true ? "Auto-ping: on" : "Auto-ping: off"}</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => { setCardMenuOpenId(null); refreshProvider(conn.id, conn.provider); }}
+                              disabled={isLoading}
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/5"
+                            >
+                              <span className={`material-symbols-outlined text-[14px] ${isLoading ? "animate-spin" : ""}`}>refresh</span>
+                              <span>Refresh quota</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setCardMenuOpenId(null); setSelectedConnection(conn); setShowEditModal(true); }}
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-text-primary transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">edit</span>
+                              <span>Edit</span>
+                            </button>
+                            <div className="mx-2 my-0.5 border-t border-black/5 dark:border-white/5" />
+                            <button
+                              type="button"
+                              onClick={() => { setCardMenuOpenId(null); handleDeleteConnection(conn.id); }}
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-red-500 transition-colors hover:bg-red-500/10"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">delete</span>
+                              <span>Delete</span>
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Enable/disable toggle — always visible */}
                     <div
-                      className="inline-flex items-center pl-0.5"
+                      className="inline-flex items-center"
                       title={
                         (conn.isActive ?? true)
                           ? "Disable connection"
@@ -1235,23 +1225,23 @@ export default function ProviderLimits() {
                 </div>
               </div>
 
-              <div className="px-2 py-1.5">
+              <div className="px-1.5 py-1">
                 {isLoading ? (
-                  <div className="text-center py-5 text-text-muted">
-                    <span className="material-symbols-outlined text-[28px] animate-spin">
+                  <div className="text-center py-3 text-text-muted">
+                    <span className="material-symbols-outlined text-[20px] animate-spin">
                       progress_activity
                     </span>
                   </div>
                 ) : error ? (
-                  <div className="text-center py-5">
-                    <span className="material-symbols-outlined text-[28px] text-red-500">
+                  <div className="text-center py-3">
+                    <span className="material-symbols-outlined text-[20px] text-red-500">
                       error
                     </span>
-                    <p className="mt-1.5 text-xs text-text-muted">{error}</p>
+                    <p className="mt-1 text-[10px] text-text-muted">{error}</p>
                   </div>
                 ) : quota?.message ? (
-                  <div className="text-center py-5">
-                    <p className="text-xs text-text-muted">{quota.message}</p>
+                  <div className="text-center py-3">
+                    <p className="text-[10px] text-text-muted">{quota.message}</p>
                   </div>
                 ) : (
                   <QuotaTable

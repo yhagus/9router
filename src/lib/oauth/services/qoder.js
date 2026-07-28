@@ -1,26 +1,26 @@
 import {
   QODER_DEVICE_TOKEN_URL,
   QODER_LOGIN_URL,
-  QODER_USERINFO_URL,
 } from "../../qoder/constants.js";
+import {
+  exchangeQoderPat,
+  fetchQoderUserInfo,
+  loginWithQoderPat,
+  parseQoderExpiry,
+} from "../../../../open-sse/shared/qoder/pat.js";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
 
 /**
  * Qoder OAuth Service
- * Implements the device-token flow:
- *   1. Generate PKCE pair + nonce + machine_id locally.
- *   2. Open https://qoder.com/device/selectAccounts?challenge=...&nonce=...
- *      in the user's browser.
- *   3. Poll openapi.qoder.sh/api/v1/deviceToken/poll until the user authorizes
- *      and the upstream returns a `dt-...` access token.
  *
- * Tokens live ~30 days; refresh is a no-op (the upstream refresh endpoint
- * returns 403 for our flow). Users re-run login when expired.
+ * Two auth paths (matching qodercli):
+ *   1. Device-token flow (browser): PKCE + poll → dt-... session token.
+ *   2. PAT flow: POST /api/v1/jobToken/exchange with personal_token → session
+ *      token (security_oauth_token). COSY never accepts raw pt-... tokens.
  *
- * Mirrors the structure of KiroService — the COSY signing / WAF-bypass body
- * encoding / chat protocol live separately in src/lib/qoder/ because they're
- * used by every signed request, not just OAuth.
+ * Device tokens live ~30 days; center refresh returns 403 for our device flow.
+ * PAT accounts re-exchange the stored personalAccessToken on refresh.
  */
 
 // Timeout for OAuth helper calls. The OAuth modal polls every 2s for up to
@@ -154,63 +154,26 @@ export class QoderService {
    * shouldn't block login; returning empty strings is fine.
    */
   async fetchUserInfo(accessToken) {
-    try {
-      const response = await fetchWithTimeout(QODER_USERINFO_URL, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: "application/json",
-          "User-Agent": "Go-http-client/2.0",
-        },
-      });
-      if (!response.ok) return { name: "", email: "" };
-      const body = await response.json();
-      return {
-        name: (body.name || body.username || "").trim(),
-        email: (body.email || "").trim(),
-        organizationId: (body.organization_id || "").trim(),
-      };
-    } catch {
-      return { name: "", email: "" };
-    }
+    return fetchQoderUserInfo(accessToken);
+  }
+
+  /**
+   * Exchange a Personal Access Token (pt-...) for a session token.
+   * See open-sse/shared/qoder/pat.js (qodercli loginWithPAT).
+   */
+  async loginWithPAT(personalAccessToken) {
+    return loginWithQoderPat(personalAccessToken);
+  }
+
+  async exchangePersonalToken(personalAccessToken) {
+    return exchangeQoderPat(personalAccessToken);
   }
 
   /**
    * Convert the upstream's expiry hint into a Unix-millisecond timestamp.
-   * Accepts:
-   *   - numeric (ms-epoch): returned as-is
-   *   - numeric string of ms-epoch: e.g. "1781594470000"
-   *   - RFC3339 string: e.g. "2026-06-16T07:15:04Z"
-   *   - seconds-from-now via expiresInSeconds (>= 0)
-   * Falls back to "now + 30 days" when both are missing.
-   *
-   * Order matters: try numeric (string or number) before Date.parse, since
-   * Date.parse accepts short numeric strings like "2026" as years and would
-   * otherwise return a misleading year-2026 timestamp instead of falling
-   * through to the integer branch.
-   *
-   * Static so callers (and tests) can use it without instantiating.
+   * See parseQoderExpiry in open-sse/shared/qoder/pat.js.
    */
   static parseExpiry(expiresAt, expiresInSeconds) {
-    if (typeof expiresAt === "number" && Number.isFinite(expiresAt) && expiresAt > 0) {
-      return expiresAt;
-    }
-    const trimmed = typeof expiresAt === "string" ? expiresAt.trim() : "";
-    if (trimmed) {
-      // Pure numeric string → ms-epoch (don't let Date.parse swallow short
-      // numerics as years).
-      if (/^\d+$/.test(trimmed)) {
-        const ms = Number.parseInt(trimmed, 10);
-        if (Number.isFinite(ms) && ms > 0) return ms;
-      }
-      const parsed = Date.parse(trimmed);
-      if (!Number.isNaN(parsed)) return parsed;
-    }
-    // expiresInSeconds === 0 means "already expired"; honor that by returning
-    // the current time rather than fabricating a 30-day default.
-    if (typeof expiresInSeconds === "number" && Number.isFinite(expiresInSeconds) && expiresInSeconds >= 0) {
-      return Date.now() + expiresInSeconds * 1000;
-    }
-    return Date.now() + 30 * 24 * 60 * 60 * 1000;
+    return parseQoderExpiry(expiresAt, expiresInSeconds);
   }
 }

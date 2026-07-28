@@ -594,15 +594,48 @@ export class QoderExecutor extends BaseExecutor {
     }
   }
 
-  // Qoder device tokens don't refresh through OAuth — the upstream returns
-  // 403 for our flow. Surfacing failure via 401-on-chat is enough; the
-  // dashboard tells users to re-login when their token expires (~30 days).
-  async refreshCredentials() {
-    return null;
+  /**
+   * Device-flow tokens: center refresh returns 403 — re-login required.
+   * PAT accounts (qodercli path): re-exchange personalAccessToken via
+   * /api/v1/jobToken/exchange, same as qodercli refreshStrategy "pat".
+   */
+  async refreshCredentials(credentials, log) {
+    const pat = credentials?.providerSpecificData?.personalAccessToken;
+    if (!pat || typeof pat !== "string" || !pat.trim()) {
+      return null;
+    }
+
+    try {
+      const { loginWithQoderPat } = await import("../shared/qoder/pat.js");
+      const result = await loginWithQoderPat(pat.trim());
+      const psd = credentials.providerSpecificData || {};
+      return {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken || credentials.refreshToken || null,
+        expiresAt: result.expireTime
+          ? new Date(result.expireTime).toISOString()
+          : null,
+        providerSpecificData: {
+          ...psd,
+          authMethod: "pat",
+          userId: result.userId || psd.userId,
+          personalAccessToken: result.personalAccessToken || pat.trim(),
+          organizationId: result.organizationId || psd.organizationId || "",
+        },
+      };
+    } catch (err) {
+      log?.warn?.("QODER", `PAT re-exchange failed: ${err.message}`);
+      return null;
+    }
   }
 
-  needsRefresh() {
-    return false;
+  needsRefresh(credentials) {
+    const pat = credentials?.providerSpecificData?.personalAccessToken;
+    if (!pat) return false;
+    if (!credentials?.expiresAt) return false;
+    const exp = new Date(credentials.expiresAt).getTime();
+    if (!Number.isFinite(exp)) return false;
+    return exp - Date.now() < 5 * 60 * 1000;
   }
 
   // Qoder returns 403 (not 429) when credits/trial are exhausted. Unlike a

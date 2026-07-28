@@ -5,8 +5,9 @@ import PropTypes from "prop-types";
 import { Button, Modal } from "@/shared/components";
 
 const PLACEHOLDER = `[
-  { "deviceToken": "dt-...", "userId": "user-001", "machineId": "uuid" },
-  { "deviceToken": "dt-...", "userId": "user-002" }
+  { "pat": "pt-..." },
+  { "pat": "pt-...", "name": "Account 2" },
+  { "deviceToken": "dt-...", "userId": "user-001" }
 ]`;
 
 function normalizeToArray(parsed) {
@@ -82,11 +83,14 @@ export default function BulkImportQoderModal({ isOpen, onClose, onSuccess }) {
     <Modal isOpen={isOpen} title="Bulk Add Qoder Accounts" onClose={handleClose}>
       <div className="flex flex-col gap-4">
         <p className="text-xs text-text-muted">
-          Paste a JSON array of Qoder account objects. Each must include{" "}
-          <code className="bg-sidebar px-1 rounded">deviceToken</code> and{" "}
-          <code className="bg-sidebar px-1 rounded">userId</code>.{" "}
-          <code className="bg-sidebar px-1 rounded">machineId</code> is optional
-          (auto-generated if omitted).
+          Paste a JSON array of Qoder accounts. Prefer{" "}
+          <code className="bg-sidebar px-1 rounded">pat</code> (Personal Access
+          Token) — same as qodercli: exchanged server-side for a session token.
+          Or pass{" "}
+          <code className="bg-sidebar px-1 rounded">deviceToken</code> +{" "}
+          <code className="bg-sidebar px-1 rounded">userId</code> from a browser
+          device login.{" "}
+          <code className="bg-sidebar px-1 rounded">machineId</code> is optional.
         </p>
 
         <textarea
