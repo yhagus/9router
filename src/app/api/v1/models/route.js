@@ -5,7 +5,7 @@ import {
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases, getApiKeyByKey } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
@@ -16,6 +16,7 @@ import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { canUseCombo } from "@/sse/services/accessGate.js";
 
 // Per-provider live model resolvers. Each receives a connection record and
 // returns { models: [{ id, name? }, ...] } | null on failure.
@@ -509,28 +510,41 @@ export async function OPTIONS() {
 }
 
 /**
- * GET /v1/models - OpenAI compatible models list (LLM/chat models only by default).
- * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
+ * GET /v1/models - OpenAI compatible models list.
+ * Returns available combos (cleaner names) filtered by the API key's combo
+ * access rules. Local requests (no API key) see all combos.
  */
-export async function GET() {
-  return Response.json(
-    { error: { message: "Model listing is disabled", type: "forbidden" } },
-    { status: 403, headers: { "Access-Control-Allow-Origin": "*" } }
-  );
-  // Upstream v0.5.35 implementation (kept in sync; re-enable by removing the 403 above):
-  // export async function GET(request) {
-  //   try {
-  //     // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
-  //     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
-  //     const data = await buildModelsList([LLM_KIND], { skipDynamicFetch });
-  //     return Response.json({ object: "list", data }, {
-  //       headers: { "Access-Control-Allow-Origin": "*" },
-  //     });
-  //   } catch (error) {
-  //     console.log("Error fetching models:", error);
-  //     return Response.json(
-  //       { error: { message: error.message, type: "server_error" } },
-  //       { status: 500 }
-  //     );
-  //   }
+export async function GET(request) {
+  try {
+    // Resolve API key record (null for local/no-key requests → sees all combos)
+    const authHeader = request.headers.get("Authorization");
+    const apiKey = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : request.headers.get("x-api-key") || null;
+
+    let apiKeyRecord = null;
+    if (apiKey) {
+      apiKeyRecord = await getApiKeyByKey(apiKey);
+    }
+
+    const combos = await getCombos();
+    const data = combos
+      .filter((combo) => canUseCombo(apiKeyRecord, combo.name))
+      .map((combo) => ({
+        id: combo.name,
+        object: "model",
+        owned_by: "combo",
+      }));
+
+    return Response.json(
+      { object: "list", data },
+      { headers: { "Access-Control-Allow-Origin": "*" } }
+    );
+  } catch (error) {
+    console.log("Error fetching models:", error);
+    return Response.json(
+      { error: { message: error.message, type: "server_error" } },
+      { status: 500, headers: { "Access-Control-Allow-Origin": "*" } }
+    );
+  }
 }
