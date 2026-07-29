@@ -442,32 +442,53 @@ function ensureUsageHistoryClientIp(db) {
   }
 }
 
+// Columns the breakdown scanner needs. Kept in one place so both callers agree.
+const USAGE_STATS_SELECT =
+  "timestamp, provider, model, connectionId, apiKey, promptTokens, completionTokens, status, tokens, cost";
+
+// `column` is interpolated as a SQL identifier — whitelist it.
+const USAGE_STATS_FILTER_COLUMNS = ["apiKey", "provider"];
+
 /**
- * @param {string} apiKey
- * @param {{ period?: string, recentLimit?: number }} [opts]
+ * Row-scan usageHistory filtered to one column value and build breakdown stats.
+ * Shared by getUsageStatsForApiKey / getUsageStatsForProvider — they differ only
+ * in which column they filter on and which flat buckets they group by.
+ *
+ * @param {"apiKey"|"provider"} column - usageHistory column to filter on
+ * @param {string} value
+ * @param {{ period?: string, recentLimit?: number, groups?: Record<string, string> }} [opts]
+ *   `groups` maps an output key to the row column it buckets on,
+ *   e.g. { byProvider: "provider" } or { byAccount: "connectionId" }.
  */
-export async function getUsageStatsForApiKey(apiKey, { period = "all", recentLimit = 30 } = {}) {
+async function buildUsageStats(column, value, { period = "all", recentLimit = 30, groups = {} } = {}) {
+  if (!USAGE_STATS_FILTER_COLUMNS.includes(column)) {
+    throw new Error(`Unsupported usage stats filter column: ${column}`);
+  }
   const db = await getAdapter();
   const cutoff = getPeriodStartIso(period);
   const hasClientIp = ensureUsageHistoryClientIp(db);
   const ipCol = hasClientIp ? ", clientIp" : "";
+  // "unknown" is the label the list views give rows whose column is NULL, so it
+  // has to match NULL here too or the drawer for that bucket opens empty.
+  const filter = value === "unknown" ? `(${column} = ? OR ${column} IS NULL)` : `${column} = ?`;
   const rows = cutoff
     ? db.all(
-        `SELECT timestamp, provider, model, promptTokens, completionTokens, status, tokens, cost${ipCol}
+        `SELECT ${USAGE_STATS_SELECT}${ipCol}
          FROM usageHistory
-         WHERE apiKey = ? AND timestamp >= ?
+         WHERE ${filter} AND timestamp >= ?
          ORDER BY id DESC`,
-        [apiKey, cutoff]
+        [value, cutoff]
       )
     : db.all(
-        `SELECT timestamp, provider, model, promptTokens, completionTokens, status, tokens, cost${ipCol}
+        `SELECT ${USAGE_STATS_SELECT}${ipCol}
          FROM usageHistory
-         WHERE apiKey = ?
+         WHERE ${filter}
          ORDER BY id DESC`,
-        [apiKey]
+        [value]
       );
 
   const safeRecentLimit = Math.max(0, Math.min(100, Number(recentLimit) || 30));
+  const groupEntries = Object.entries(groups);
   const stats = {
     totalRequests: rows.length,
     totalPromptTokens: 0,
@@ -476,17 +497,16 @@ export async function getUsageStatsForApiKey(apiKey, { period = "all", recentLim
     totalCost: 0,
     lastUsed: null,
     byModel: {},
-    byProvider: {},
     byIp: {},
     recentRequests: [],
   };
+  for (const [outKey] of groupEntries) stats[outKey] = {};
 
   for (const r of rows) {
     const tokens = parseJson(r.tokens, {}) || {};
     const { promptTokens, completionTokens, cachedTokens } = getUsageTokenCounts(tokens, r);
     const modelKey = r.provider ? `${r.model} (${r.provider})` : r.model;
     const entryCost = Number(r.cost) || 0;
-    const providerKey = r.provider || "unknown";
     const clientIp = (typeof r.clientIp === "string" && r.clientIp.trim()) ? r.clientIp.trim() : null;
 
     stats.totalPromptTokens += promptTokens;
@@ -517,24 +537,31 @@ export async function getUsageStatsForApiKey(apiKey, { period = "all", recentLim
     modelStats.cost += entryCost;
     if (new Date(r.timestamp) > new Date(modelStats.lastUsed)) modelStats.lastUsed = r.timestamp;
 
-    if (!stats.byProvider[providerKey]) {
-      stats.byProvider[providerKey] = {
-        provider: providerKey,
-        requests: 0,
-        promptTokens: 0,
-        completionTokens: 0,
-        cachedTokens: 0,
-        cost: 0,
-        lastUsed: r.timestamp,
-      };
+    for (const [outKey, rowCol] of groupEntries) {
+      const bucketKey = r[rowCol] || "unknown";
+      const bucket = stats[outKey];
+      if (!bucket[bucketKey]) {
+        bucket[bucketKey] = {
+          // `id` plus the source column name, so consumers can read either
+          // (byProvider rows keep their historical `provider` field).
+          id: bucketKey,
+          [rowCol]: bucketKey,
+          requests: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          cachedTokens: 0,
+          cost: 0,
+          lastUsed: r.timestamp,
+        };
+      }
+      const groupStats = bucket[bucketKey];
+      groupStats.requests++;
+      groupStats.promptTokens += promptTokens;
+      groupStats.completionTokens += completionTokens;
+      groupStats.cachedTokens += cachedTokens;
+      groupStats.cost += entryCost;
+      if (new Date(r.timestamp) > new Date(groupStats.lastUsed)) groupStats.lastUsed = r.timestamp;
     }
-    const providerStats = stats.byProvider[providerKey];
-    providerStats.requests++;
-    providerStats.promptTokens += promptTokens;
-    providerStats.completionTokens += completionTokens;
-    providerStats.cachedTokens += cachedTokens;
-    providerStats.cost += entryCost;
-    if (new Date(r.timestamp) > new Date(providerStats.lastUsed)) providerStats.lastUsed = r.timestamp;
 
     if (clientIp) {
       if (!stats.byIp[clientIp]) {
@@ -563,13 +590,17 @@ export async function getUsageStatsForApiKey(apiKey, { period = "all", recentLim
         cachedTokens,
         status: r.status || "ok",
         clientIp,
+        connectionId: r.connectionId || null,
+        apiKey: r.apiKey || null,
       });
     }
   }
 
   stats.byModel = Object.values(stats.byModel).sort((a, b) => b.requests - a.requests);
-  stats.byProvider = Object.values(stats.byProvider).sort((a, b) => b.requests - a.requests);
   stats.byIp = Object.values(stats.byIp).sort((a, b) => b.requests - a.requests);
+  for (const [outKey] of groupEntries) {
+    stats[outKey] = Object.values(stats[outKey]).sort((a, b) => b.requests - a.requests);
+  }
   stats.totalTokens = stats.totalPromptTokens + stats.totalCompletionTokens;
   stats.uniqueIps = stats.byIp.length;
 
@@ -597,6 +628,67 @@ export async function getUsageStatsForApiKey(apiKey, { period = "all", recentLim
   };
 
   return stats;
+}
+
+/**
+ * @param {string} apiKey
+ * @param {{ period?: string, recentLimit?: number }} [opts]
+ */
+export async function getUsageStatsForApiKey(apiKey, opts = {}) {
+  return buildUsageStats("apiKey", apiKey, {
+    ...opts,
+    groups: { byProvider: "provider" },
+  });
+}
+
+/**
+ * Breakdown of one provider's usage: by model, by account, by API key.
+ * @param {string} providerId - usageHistory.provider value ("unknown" for NULL)
+ * @param {{ period?: string, recentLimit?: number }} [opts]
+ */
+export async function getUsageStatsForProvider(providerId, opts = {}) {
+  return buildUsageStats("provider", providerId, {
+    ...opts,
+    groups: { byAccount: "connectionId", byApiKey: "apiKey" },
+  });
+}
+
+/**
+ * Aggregate usage totals per provider for every provider that has usage.
+ * Unlike getUsageTotalsByApiKeys this takes no id list — it's a plain
+ * GROUP BY, so providers with no rows in the period simply don't appear.
+ * @param {{ period?: string }} [opts]
+ * @returns {Promise<Array<{ provider: string, requests: number, promptTokens: number, completionTokens: number, totalTokens: number, lastUsed: string|null }>>}
+ */
+export async function getUsageTotalsByProviders({ period = "all" } = {}) {
+  const db = await getAdapter();
+  const cutoff = getPeriodStartIso(period);
+  const select = `SELECT COALESCE(provider, 'unknown') as provider,
+                COUNT(*) as requests,
+                COALESCE(SUM(promptTokens), 0) as promptTokens,
+                COALESCE(SUM(completionTokens), 0) as completionTokens,
+                COALESCE(SUM(cost), 0) as cost,
+                MAX(timestamp) as lastUsed
+         FROM usageHistory`;
+  const rows = cutoff
+    ? db.all(`${select} WHERE timestamp >= ? GROUP BY 1`, [cutoff])
+    : db.all(`${select} GROUP BY 1`);
+
+  return rows
+    .map((r) => {
+      const promptTokens = Number(r.promptTokens) || 0;
+      const completionTokens = Number(r.completionTokens) || 0;
+      return {
+        provider: r.provider,
+        requests: Number(r.requests) || 0,
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+        cost: Number(r.cost) || 0,
+        lastUsed: r.lastUsed || null,
+      };
+    })
+    .sort((a, b) => b.requests - a.requests);
 }
 
 /**

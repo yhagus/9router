@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
 import RequestDetailsTab from "./components/RequestDetailsTab";
 import ApiKeysTab from "./components/ApiKeysTab";
+import ProvidersTab from "./components/ProvidersTab";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -19,6 +20,7 @@ const TABS = [
   { value: "overview", label: "Overview" },
   { value: "details", label: "Details" },
   { value: "api-keys", label: "API Key" },
+  { value: "providers", label: "Providers" },
 ];
 
 const TAB_VALUES = new Set(TABS.map((t) => t.value));
@@ -37,12 +39,19 @@ function UsageContent() {
 
   const [overviewPeriod, setOverviewPeriod] = useState("today");
   const [apiKeysPeriod, setApiKeysPeriod] = useState("all");
+  const [providersPeriod, setProvidersPeriod] = useState("all");
 
   const tabFromUrl = searchParams.get("tab");
   const activeTab = tabFromUrl && TAB_VALUES.has(tabFromUrl) ? tabFromUrl : "overview";
-  const showPeriod = activeTab === "overview" || activeTab === "api-keys";
-  const period = activeTab === "api-keys" ? apiKeysPeriod : overviewPeriod;
-  const setPeriod = activeTab === "api-keys" ? setApiKeysPeriod : setOverviewPeriod;
+
+  // Each tab keeps its own period selection; a map beats nested ternaries here.
+  const periodByTab = {
+    overview: [overviewPeriod, setOverviewPeriod],
+    "api-keys": [apiKeysPeriod, setApiKeysPeriod],
+    providers: [providersPeriod, setProvidersPeriod],
+  };
+  const [period, setPeriod] = periodByTab[activeTab] || periodByTab.overview;
+  const showPeriod = activeTab in periodByTab;
 
   const handleTabChange = (value) => {
     if (value === activeTab) return;
@@ -79,6 +88,7 @@ function UsageContent() {
       {activeTab === "logs" && <RequestLogger />}
       {activeTab === "details" && <RequestDetailsTab />}
       {activeTab === "api-keys" && <ApiKeysTab period={apiKeysPeriod} />}
+      {activeTab === "providers" && <ProvidersTab period={providersPeriod} />}
     </div>
   );
 }
