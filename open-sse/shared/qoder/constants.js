@@ -19,15 +19,12 @@ export const QODER_DEVICE_TOKEN_URL = `${QODER_OPENAPI_BASE}/api/v1/deviceToken/
 export const QODER_USERINFO_URL = `${QODER_OPENAPI_BASE}/api/v1/userinfo`;
 export const QODER_QUOTA_USAGE_URL = `${QODER_OPENAPI_BASE}/api/v2/quota/usage`;
 export const QODER_REFRESH_TOKEN_URL = `${QODER_CENTER_BASE}/algo/api/v3/user/refresh_token`;
-// PAT → session exchange (matches qodercli loginWithPAT / exchangePersonalToken)
+// PAT (Personal Access Token, pt-...) → short-lived job token (jt-...) exchange
+// (matches qodercli loginWithPAT / exchangePersonalToken). PATs cannot sign COSY
+// requests directly — they must be exchanged first. NOT COSY-signed (plain JSON POST).
 export const QODER_JOB_TOKEN_EXCHANGE_URL = `${QODER_OPENAPI_BASE}/api/v1/jobToken/exchange`;
 // User-Agent qodercli sends on OpenAPI calls (exchange is picky about client identity)
 export const QODER_CLI_USER_AGENT = "qoder/1.1.6";
-
-// PAT (Personal Access Token, pt-...) → short-lived job token (jt-...) exchange.
-// PATs cannot sign COSY requests directly — they must be exchanged first.
-// This endpoint is NOT COSY-signed (plain JSON POST).
-export const QODER_JOB_TOKEN_EXCHANGE_URL = `${QODER_OPENAPI_BASE}/api/v1/jobToken/exchange`;
 
 // Inference endpoints (under /algo on api3.qoder.sh, all COSY-signed)
 export const QODER_CHAT_SIG_PATH = "/api/v2/service/pro/sse/agent_chat_generation";
