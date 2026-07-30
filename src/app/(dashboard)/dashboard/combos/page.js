@@ -196,23 +196,26 @@ export default function CombosPage() {
       )}
 
       {/* Create Modal - Use key to force remount and reset state */}
-      <ComboFormModal
-        key="create"
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSave={handleCreate}
-        activeProviders={activeProviders}
-      />
+      {showCreateModal && (
+        <ComboFormModal
+          key="create"
+          isOpen={showCreateModal}
+          onClose={() => setShowCreateModal(false)}
+          onSave={handleCreate}
+          activeProviders={activeProviders}
+        />
+      )}
 
-      {/* Edit Modal - Use key to force remount and reset state */}
-      <ComboFormModal
-        key={editingCombo?.id || "new"}
-        isOpen={!!editingCombo}
-        combo={editingCombo}
-        onClose={() => setEditingCombo(null)}
-        onSave={(data) => handleUpdate(editingCombo.id, data)}
-        activeProviders={activeProviders}
-      />
+      {editingCombo && (
+        <ComboFormModal
+          key={editingCombo.id}
+          isOpen={!!editingCombo}
+          combo={editingCombo}
+          onClose={() => setEditingCombo(null)}
+          onSave={(data) => handleUpdate(editingCombo.id, data)}
+          activeProviders={activeProviders}
+        />
+      )}
 
       {/* Confirm Delete Modal */}
       <ConfirmModal
@@ -620,18 +623,20 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
       </Modal>
 
       {/* Model Select Modal */}
-      <ModelSelectModal
-        isOpen={showModelSelect}
-        onClose={() => setShowModelSelect(false)}
-        onSelect={handleAddModel}
-        onDeselect={handleDeselectModel}
-        activeProviders={activeProviders}
-        modelAliases={modelAliases}
-        title="Add Model to Combo"
-        kindFilter={kindFilter}
-        addedModelValues={models}
-        closeOnSelect={false}
-      />
+      {showModelSelect && (
+        <ModelSelectModal
+          isOpen={showModelSelect}
+          onClose={() => setShowModelSelect(false)}
+          onSelect={handleAddModel}
+          onDeselect={handleDeselectModel}
+          activeProviders={activeProviders}
+          modelAliases={modelAliases}
+          title="Add Model to Combo"
+          kindFilter={kindFilter}
+          addedModelValues={models}
+          closeOnSelect={false}
+        />
+      )}
     </>
   );
 }

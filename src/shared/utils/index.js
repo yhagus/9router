@@ -2,6 +2,7 @@
 export { cn } from "./cn";
 export { formatCompact } from "./formatCompact";
 export * as api from "./api";
+export { getProviderIconSrc, markProviderIconMissing, resolveProviderIconId } from "./providerIcon";
 
 import { v4 as uuidv4 } from "uuid";
 
