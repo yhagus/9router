@@ -153,14 +153,44 @@ function isQoderQueuedError(status, body) {
   return status === 403 && parseQoderErrorPayload(body) !== null;
 }
 
-function isQoderQueuedSSEData(data) {
+/**
+ * Build a synthetic non-ok Response from an error Qoder delivered *inside* an
+ * otherwise-successful HTTP 200 SSE stream. Returning a non-ok response (instead
+ * of streaming the error to the client) routes it through chatCore's normal
+ * error path → parseError → disableAccount → account fallback. The raw inner
+ * body is preserved so classification/logs see the real provider text.
+ */
+function qoderInStreamErrorResponse(status, body) {
+  return new Response(body, {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/**
+ * Classify the first SSE event Qoder sends. Qoder reports both queue saturation
+ * and credit exhaustion as errors *inside* an HTTP 200 SSE stream, so the HTTP
+ * status alone is not enough. Returns:
+ *   { kind: "queued" }              → queue-full marker; caller should retry
+ *   { kind: "error", status, body } → fatal non-queued error (e.g. quota 403);
+ *                                     caller should fail the request so the
+ *                                     account-fallback machinery engages
+ *   { kind: "ok" }                  → normal data; caller should keep streaming
+ */
+function classifyQoderSSEFirstEvent(data) {
+  let envelope;
   try {
-    const envelope = JSON.parse(data);
-    const status = typeof envelope.statusCodeValue === "number" ? envelope.statusCodeValue : 200;
-    return isQoderQueuedError(status, envelope.body);
+    envelope = JSON.parse(data);
   } catch {
-    return false;
+    return { kind: "ok" };
   }
+  const status = typeof envelope.statusCodeValue === "number" ? envelope.statusCodeValue : 200;
+  if (isQoderQueuedError(status, envelope.body)) return { kind: "queued" };
+  if (status !== 200) {
+    const body = typeof envelope.body === "string" ? envelope.body : data;
+    return { kind: "error", status, body };
+  }
+  return { kind: "ok" };
 }
 
 function restoreResponse(response, chunks, reader) {
@@ -196,9 +226,11 @@ function restoreResponse(response, chunks, reader) {
   });
 }
 
-// Qoder signals queue saturation as an error inside a successful HTTP SSE
-// response. Inspect the first event before any data reaches the client so the
-// request can be retried without duplicating streamed output.
+// Qoder signals queue saturation AND credit exhaustion as errors inside a
+// successful HTTP SSE response. Inspect the first event before any data reaches
+// the client: a queue-full marker is retried, a fatal error (e.g. quota 403)
+// fails the request so account fallback engages — all without duplicating
+// streamed output.
 async function inspectInitialQoderSSE(response) {
   if (!response.body) return { queued: false, response };
 
@@ -212,9 +244,12 @@ async function inspectInitialQoderSSE(response) {
     if (done) {
       buffer += decoder.decode();
       const trailing = buffer.replace(/\r$/, "");
-      if (trailing.startsWith("data:") && isQoderQueuedSSEData(trailing.slice(5).trimStart())) {
-        try { reader.releaseLock(); } catch {}
-        return { queued: true, response: null };
+      if (trailing.startsWith("data:")) {
+        const decision = classifyQoderSSEFirstEvent(trailing.slice(5).trimStart());
+        if (decision.kind === "queued") return { queued: true, response: null };
+        if (decision.kind === "error") {
+          return { queued: false, response: qoderInStreamErrorResponse(decision.status, decision.body) };
+        }
       }
       return { queued: false, response: restoreResponse(response, chunks, reader) };
     }
@@ -226,10 +261,16 @@ async function inspectInitialQoderSSE(response) {
       const line = buffer.slice(0, newlineIndex).replace(/\r$/, "");
       buffer = buffer.slice(newlineIndex + 1);
       if (!line.startsWith("data:")) continue;
-      if (isQoderQueuedSSEData(line.slice(5).trimStart())) {
+      const decision = classifyQoderSSEFirstEvent(line.slice(5).trimStart());
+      if (decision.kind === "queued") {
         await reader.cancel();
         try { reader.releaseLock(); } catch {}
         return { queued: true, response: null };
+      }
+      if (decision.kind === "error") {
+        await reader.cancel();
+        try { reader.releaseLock(); } catch {}
+        return { queued: false, response: qoderInStreamErrorResponse(decision.status, decision.body) };
       }
 
       return { queued: false, response: restoreResponse(response, chunks, reader) };

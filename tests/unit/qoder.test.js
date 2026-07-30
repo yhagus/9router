@@ -500,6 +500,44 @@ describe("wrapQoderSSE", () => {
     expect(inspected.queued).toBe(true);
   });
 
+  // Credit/trial exhaustion arrives as a NON-queued 403 inside an HTTP 200 SSE
+  // stream. It must be turned into a non-ok response (not streamed to the
+  // client) so chatCore runs parseError → disableAccount → account fallback.
+  it("turns a non-queued in-stream 403 (credit exhausted) into a non-ok response", async () => {
+    const rawBody = JSON.stringify({ code: "10601", message: "credit exhausted" });
+    const upstream = `data: ${JSON.stringify({ statusCodeValue: 403, body: rawBody })}\n\n`;
+    const inspected = await inspectInitialQoderSSE(makeResponse([upstream]));
+
+    expect(inspected.queued).toBe(false);
+    expect(inspected.response).not.toBeNull();
+    expect(inspected.response.ok).toBe(false);
+    expect(inspected.response.status).toBe(403);
+    // Raw inner body is preserved so parseError classifies it (non-queued 403
+    // → disableAccount: true) instead of seeing a templated/empty message.
+    await expect(inspected.response.text()).resolves.toBe(rawBody);
+  });
+
+  it("generalizes to any non-queued non-200 first event (e.g. 500)", async () => {
+    const upstream = `data: ${JSON.stringify({ statusCodeValue: 500, body: "boom" })}\n\n`;
+    const inspected = await inspectInitialQoderSSE(makeResponse([upstream]));
+
+    expect(inspected.queued).toBe(false);
+    expect(inspected.response.ok).toBe(false);
+    expect(inspected.response.status).toBe(500);
+  });
+
+  it("still streams a normal 200 first event (no false-positive fallback)", async () => {
+    const inner = JSON.stringify({ choices: [{ delta: { content: "hi" } }] });
+    const upstream = `data: ${JSON.stringify({ statusCodeValue: 200, body: inner })}\n\n`;
+    const inspected = await inspectInitialQoderSSE(makeResponse([upstream]));
+
+    expect(inspected.queued).toBe(false);
+    expect(inspected.response.ok).toBe(true);
+    // The restored stream still carries the event through to wrapQoderSSE.
+    const out = await drain(wrapQoderSSE(inspected.response, "qoder/auto"));
+    expect(out).toContain(`data: ${inner}\n\n`);
+  });
+
   // Regression for review finding #4: a final data: line without a trailing
   // newline used to be silently dropped from `buffer` in flush().
   it("drains a trailing partial line without a newline in flush()", async () => {
