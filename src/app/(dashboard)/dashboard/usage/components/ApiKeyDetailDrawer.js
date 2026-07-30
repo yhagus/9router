@@ -2,19 +2,10 @@
 
 import Drawer from "@/shared/components/Drawer";
 import { cn } from "@/shared/utils/cn";
-import { formatCompact } from "@/shared/utils";
+import { formatCompact, formatRelativeTime, formatFullDateTime } from "@/shared/utils";
 
 function formatFull(n) {
   return (Number(n) || 0).toLocaleString();
-}
-
-function formatTime(iso) {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return "—";
-  }
 }
 
 function StatCard({ label, value, sub, title }) {
@@ -94,8 +85,11 @@ function ModelTable({ rows, emptyMessage }) {
                 >
                   {formatCompact(row.promptTokens)}·{formatCompact(row.completionTokens)}
                 </td>
-                <td className="py-2 px-2 text-right text-[11px] text-text-muted whitespace-nowrap">
-                  {formatTime(row.lastUsed)}
+                <td
+                  className="py-2 px-2 text-right text-[11px] text-text-muted whitespace-nowrap"
+                  title={formatFullDateTime(row.lastUsed)}
+                >
+                  {formatRelativeTime(row.lastUsed)}
                 </td>
               </tr>
             );
@@ -172,8 +166,11 @@ function IpTable({ rows }) {
                 <td className="py-2 px-2 text-right font-mono font-medium" title={formatFull(total)}>
                   {formatCompact(total)}
                 </td>
-                <td className="py-2 px-2 text-right text-[11px] text-text-muted whitespace-nowrap">
-                  {formatTime(row.lastUsed)}
+                <td
+                  className="py-2 px-2 text-right text-[11px] text-text-muted whitespace-nowrap"
+                  title={formatFullDateTime(row.lastUsed)}
+                >
+                  {formatRelativeTime(row.lastUsed)}
                 </td>
               </tr>
             );
@@ -207,8 +204,11 @@ function RecentTable({ rows }) {
               key={`${row.timestamp}-${i}`}
               className="border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0"
             >
-              <td className="py-2 px-2 text-[11px] text-text-muted whitespace-nowrap">
-                {formatTime(row.timestamp)}
+              <td
+                className="py-2 px-2 text-[11px] text-text-muted whitespace-nowrap"
+                title={formatFullDateTime(row.timestamp)}
+              >
+                {formatRelativeTime(row.timestamp)}
               </td>
               <td className="py-2 px-2 font-mono text-xs truncate max-w-[140px]" title={row.model}>
                 {row.model}
@@ -275,7 +275,9 @@ export default function ApiKeyDetailDrawer({
               <span className="px-2 py-0.5 rounded bg-orange-500/10 text-orange-500">Paused</span>
             )}
             {keyMeta?.createdAt && (
-              <span>Created {new Date(keyMeta.createdAt).toLocaleDateString()}</span>
+              <span title={formatFullDateTime(keyMeta.createdAt)}>
+                Created {formatRelativeTime(keyMeta.createdAt)}
+              </span>
             )}
           </div>
 
@@ -304,7 +306,11 @@ export default function ApiKeyDetailDrawer({
               label="Cost"
               value={stats.totalCost ? `$${Number(stats.totalCost).toFixed(4)}` : "—"}
             />
-            <StatCard label="Last used" value={formatTime(stats.lastUsed)} />
+            <StatCard
+              label="Last used"
+              value={formatRelativeTime(stats.lastUsed)}
+              title={formatFullDateTime(stats.lastUsed)}
+            />
             <StatCard
               label="Unique IPs"
               value={formatCompact(stats.uniqueIps ?? stats.byIp?.length ?? 0)}
