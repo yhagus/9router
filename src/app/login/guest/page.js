@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Card, Button, Input } from "@/shared/components";
+import { APP_NAME } from "@/shared/constants/config";
 
 export default function GuestLoginPage() {
   const [apiKey, setApiKey] = useState("");
@@ -38,7 +39,7 @@ export default function GuestLoginPage() {
       <div className="landing-grid absolute inset-0 pointer-events-none" aria-hidden="true" />
       <div className="relative z-10 w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-primary mb-2">9Router Client</h1>
+          <h1 className="text-3xl font-bold text-primary mb-2">{APP_NAME} Client</h1>
           <p className="text-text-muted">Enter your API key to view your usage</p>
         </div>
 

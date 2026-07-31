@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
-import { GITHUB_CONFIG } from "@/shared/constants/config";
+import { GITHUB_CONFIG, APP_NAME } from "@/shared/constants/config";
 
 export default function DonateModal({ isOpen, onClose }) {
   const [data, setData] = useState(null);
@@ -47,7 +47,7 @@ export default function DonateModal({ isOpen, onClose }) {
         <div className="flex items-center justify-between p-3 border-b border-black/5 dark:border-white/5">
           <h2 className="text-lg font-semibold text-text-main flex items-center gap-2">
             <span className="material-symbols-outlined text-pink-500">volunteer_activism</span>
-            {data?.title || "Support 9Router"}
+            {data?.title || `Support ${APP_NAME}`}
           </h2>
           <button
             onClick={onClose}

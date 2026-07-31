@@ -1,8 +1,12 @@
 import pkg from "../../../package.json" with { type: "json" };
 
+// Display brand name — override at build time via NEXT_PUBLIC_APP_NAME (default: LobakMerah).
+// Note: NEXT_PUBLIC_* vars are inlined at build time; rebuild after changing.
+export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || "LobakMerah";
+
 // App configuration
 export const APP_CONFIG = {
-  name: "9Router Proxy",
+  name: process.env.NEXT_PUBLIC_APP_NAME || "LobakMerah Proxy",
   description: "AI Infrastructure Management",
   version: pkg.version,
 };

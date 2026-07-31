@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Card, Button, Input } from "@/shared/components";
-import { formatCompact } from "@/shared/utils";
+import { Card, Badge, ThemeToggle, Skeleton } from "@/shared/components";
+import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { cn, formatCompact } from "@/shared/utils";
+import { APP_NAME } from "@/shared/constants/config";
 
 function getUsageLimit(k) {
   if (!k?.limitMode || k.limitMode === "none" || !(k.limitValue > 0)) return null;
@@ -26,13 +28,121 @@ function barColor(pct, over) {
   return "bg-primary";
 }
 
+function CopyButton({ onClick, copied, label }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={copied ? "Copied!" : label}
+      aria-label={label}
+      className={cn(
+        "inline-flex size-7 shrink-0 items-center justify-center rounded-[8px] border transition-all duration-150",
+        copied
+          ? "border-brand-500/40 bg-brand-500/10 text-brand-600 dark:text-brand-300"
+          : "border-border bg-surface-2 text-text-muted hover:bg-surface-3 hover:text-text-main"
+      )}
+    >
+      <span className="material-symbols-outlined text-[16px]">{copied ? "check" : "content_copy"}</span>
+    </button>
+  );
+}
+
+/** Details-panel row: label | value | action, separated by dividers in the parent. */
+function DetailRow({ label, sublabel, action, top = false, children }) {
+  return (
+    <div
+      className={cn(
+        "grid gap-1.5 py-4 first:pt-0 last:pb-0 sm:grid-cols-[120px_minmax(0,1fr)_auto] sm:gap-4",
+        top ? "sm:items-start" : "sm:items-center"
+      )}
+    >
+      <div className={cn("min-w-0", top && "sm:pt-1")}>
+        <p className="text-sm font-medium text-text-main">{label}</p>
+        {sublabel && (
+          <p className="truncate text-xs text-text-muted" title={sublabel}>
+            {sublabel}
+          </p>
+        )}
+      </div>
+      <div className="min-w-0">{children}</div>
+      {action && (
+        <div className="flex items-center gap-2 justify-self-start sm:justify-self-end">{action}</div>
+      )}
+    </div>
+  );
+}
+
+/** Mono value that copies on click, with hover affordance. */
+function CopyableValue({ value, onCopy, label }) {
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      title="Click to copy"
+      aria-label={label}
+      className="group block w-full min-w-0 text-left"
+    >
+      <code
+        className="block truncate font-mono text-sm text-text-main transition-colors group-hover:text-brand-600 dark:group-hover:text-brand-300"
+        title={value}
+      >
+        {value}
+      </code>
+    </button>
+  );
+}
+
+function ConnectSkeleton() {
+  return (
+    <div className="flex flex-col gap-4" aria-hidden="true">
+      <Card padding="md">
+        <div className="mb-4 flex items-center gap-3">
+          <Skeleton className="size-9 rounded-[10px]" />
+          <div className="flex-1">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="mt-1.5 h-3 w-64 max-w-full" />
+          </div>
+        </div>
+        <div className="divide-y divide-border-subtle">
+          <div className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
+            <Skeleton className="h-4 w-20" />
+            <Skeleton className="h-4 flex-1" />
+            <Skeleton className="size-7 rounded-[8px]" />
+          </div>
+          <div className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
+            <Skeleton className="h-4 w-16" />
+            <Skeleton className="h-4 flex-1" />
+            <Skeleton className="size-7 rounded-[8px]" />
+          </div>
+          <div className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
+            <Skeleton className="h-4 w-16" />
+            <div className="flex flex-1 flex-wrap gap-1.5">
+              <Skeleton className="h-6 w-28 rounded-md" />
+              <Skeleton className="h-6 w-40 rounded-md" />
+              <Skeleton className="h-6 w-24 rounded-md" />
+            </div>
+          </div>
+        </div>
+      </Card>
+      <Card padding="md">
+        <div className="mb-4 flex items-center gap-3">
+          <Skeleton className="size-9 rounded-[10px]" />
+          <Skeleton className="h-4 w-28" />
+        </div>
+        <Skeleton className="h-3.5 w-40" />
+        <Skeleton className="mt-3 h-2.5 w-full rounded-full" />
+      </Card>
+    </div>
+  );
+}
+
 export default function ConnectPage() {
   const [baseUrl, setBaseUrl] = useState("/v1");
   const [keys, setKeys] = useState([]);
   const [combos, setCombos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(null);
+  const { copied, copy } = useCopyToClipboard();
 
   useEffect(() => {
     setBaseUrl(`${window.location.origin}/v1`);
@@ -65,239 +175,196 @@ export default function ConnectPage() {
     fetchConnect();
   }, [fetchConnect]);
 
-  const copy = async (text, id) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(id);
-      setTimeout(() => setCopied((prev) => (prev === id ? null : prev)), 1500);
-    } catch {
-      // ignore
-    }
-  };
-
   const defaultKey = keys[0] || null;
   const usageLimit = useMemo(() => getUsageLimit(defaultKey), [defaultKey]);
+  const initialLoading = loading && keys.length === 0;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg p-4 relative">
-      <div className="landing-grid absolute inset-0 pointer-events-none" aria-hidden="true" />
-      <div className="w-full max-w-lg relative z-10 flex flex-col gap-4">
-        <div className="text-center mb-2">
-          <h1 className="text-2xl font-bold text-text-main">Connect to 9Router</h1>
-          <p className="text-sm text-text-muted mt-1">
+    <div className="dot-grid-bg relative min-h-screen">
+      <ThemeToggle variant="card" className="absolute right-4 top-4 z-20" />
+
+      <main className="relative z-10 mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
+        <header className="mb-8 text-center sm:mb-10">
+          <div className="mx-auto mb-4 inline-flex size-12 items-center justify-center rounded-[14px] bg-brand-500/10 text-brand-500">
+            <span className="material-symbols-outlined text-[26px]">cable</span>
+          </div>
+          <h1 className="text-2xl font-bold text-text-main sm:text-3xl">Connect to {APP_NAME}</h1>
+          <p className="mt-2 text-sm text-text-muted">
             OpenAI & Anthropic-compatible base URL and public API keys
           </p>
-        </div>
+        </header>
 
-        <Card padding="md">
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-text-main">Base URL</label>
-            <div className="flex items-center gap-2">
-              <Input value={baseUrl} readOnly className="flex-1 font-mono text-sm" />
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => copy(baseUrl, "base")}
-                className="shrink-0"
-                title="Copy base URL"
-              >
-                <span className="material-symbols-outlined text-[18px]">
-                  {copied === "base" ? "check" : "content_copy"}
-                </span>
-              </Button>
-            </div>
-            <p className="text-xs text-text-muted">
-              Use this as the API base in OpenAI-compatible clients (e.g.{" "}
-              <code className="bg-sidebar px-1 rounded">…/v1/chat/completions</code>) or
-              Anthropic-compatible clients (e.g.{" "}
-              <code className="bg-sidebar px-1 rounded">…/v1/messages</code>).
-            </p>
-          </div>
-        </Card>
-
-        <Card padding="md">
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <h2 className="text-sm font-semibold text-text-main flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-primary text-[18px]">vpn_key</span>
-                  Default public API key
-                </h2>
-                <p className="text-xs text-text-muted mt-0.5">
-                  Shared key for public access. Prefer private keys for personal use.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={fetchConnect}
-                className="p-1.5 rounded-lg text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"
-                title="Refresh"
-                aria-label="Refresh"
-              >
-                <span className={`material-symbols-outlined text-[18px] ${loading ? "animate-spin" : ""}`}>
-                  refresh
-                </span>
-              </button>
-            </div>
-
-            {error && <p className="text-xs text-red-500">{error}</p>}
-
-            {loading && keys.length === 0 ? (
-              <div className="flex items-center justify-center py-8 text-text-muted gap-2 text-sm">
-                <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
-                Loading…
-              </div>
-            ) : keys.length === 0 ? (
-              <div className="text-center py-8">
-                <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary mb-2">
-                  <span className="material-symbols-outlined text-[20px]">vpn_key_off</span>
-                </div>
-                <p className="text-sm font-medium text-text-main">No default public key</p>
-                <p className="text-xs text-text-muted mt-1">
-                  An admin can set a public key as default on the Endpoint page.
-                </p>
-              </div>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {keys.map((k) => (
-                  <li
-                    key={k.id}
-                    className="rounded-lg border border-black/5 dark:border-white/10 px-3 py-2.5 flex flex-col gap-1.5"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-text-main truncate" title={k.name}>
-                        {k.name}
-                      </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 shrink-0">
-                        Public
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <code className="flex-1 min-w-0 text-xs font-mono text-text-muted truncate">
-                        {k.key}
-                      </code>
-                      <button
-                        type="button"
-                        onClick={() => copy(k.key, k.id)}
-                        className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary shrink-0"
-                        title="Copy key"
-                        aria-label={`Copy key ${k.name}`}
-                      >
-                        <span className="material-symbols-outlined text-[16px]">
-                          {copied === k.id ? "check" : "content_copy"}
-                        </span>
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </Card>
-
-        {keys.length > 0 && (
-          <Card padding="md">
-            <div className="flex flex-col gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-text-main flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-primary text-[18px]">hub</span>
-                  Models
-                </h2>
-                <p className="text-xs text-text-muted mt-0.5">
-                  Use one of these as the{" "}
-                  <code className="bg-sidebar px-1 rounded">model</code> value in your requests. Click to copy.
-                </p>
-              </div>
-
-              {combos.length === 0 ? (
-                <p className="text-xs text-text-muted text-center py-4">
-                  No models available for this key
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {combos.map((c) => (
-                    <button
-                      key={c.name}
-                      type="button"
-                      onClick={() => copy(c.name, `combo-${c.name}`)}
-                      title={`Copy ${c.name}`}
-                      aria-label={`Copy model ${c.name}`}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary text-xs font-mono transition-colors"
-                    >
-                      {copied === `combo-${c.name}` ? (
-                        <span className="material-symbols-outlined text-[14px]">check</span>
-                      ) : null}
-                      {c.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </Card>
-        )}
-
-        {usageLimit && (
-          <Card padding="md">
-            <div className="flex flex-col gap-3">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-semibold text-text-main flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-primary text-[18px]">speed</span>
-                    Usage limit
-                  </h2>
-                  <p className="text-xs text-text-muted mt-0.5">
-                    Lifetime quota for the default public key
-                  </p>
-                </div>
-                <span
-                  className={`text-xs font-mono font-medium shrink-0 ${
-                    usageLimit.over ? "text-red-500" : "text-text-main"
-                  }`}
+        {initialLoading ? (
+          <ConnectSkeleton />
+        ) : (
+          <div className="flex flex-col gap-4">
+            {/* Connection details panel */}
+            <Card
+              icon="settings_ethernet"
+              title="Connection details"
+              subtitle="Shared public access — prefer private keys for personal use."
+              action={
+                <button
+                  type="button"
+                  onClick={fetchConnect}
+                  title="Refresh"
+                  aria-label="Refresh"
+                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-[8px] text-text-muted transition-colors hover:bg-surface-2 hover:text-text-main"
                 >
-                  {Math.round(usageLimit.pct)}%
-                </span>
-              </div>
-
-              <div className="flex items-baseline justify-between gap-2">
-                <p
-                  className={`text-sm font-mono font-medium ${
-                    usageLimit.over ? "text-red-500" : "text-text-main"
-                  }`}
-                >
-                  {usageLimit.text}
-                </p>
-                {usageLimit.over && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-500 shrink-0">
-                    Limit reached
+                  <span className={cn("material-symbols-outlined text-[18px]", loading && "animate-spin")}>
+                    refresh
                   </span>
+                </button>
+              }
+            >
+              {error && (
+                <p className="mb-3 flex items-center gap-1.5 rounded-[10px] bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+                  <span className="material-symbols-outlined text-[14px]">error</span>
+                  {error}
+                </p>
+              )}
+
+              <div className="divide-y divide-border-subtle">
+                <DetailRow
+                  label="Base URL"
+                  action={
+                    <CopyButton
+                      onClick={() => copy(baseUrl, "base")}
+                      copied={copied === "base"}
+                      label="Copy base URL"
+                    />
+                  }
+                >
+                  <CopyableValue
+                    value={baseUrl}
+                    onCopy={() => copy(baseUrl, "base")}
+                    label="Copy base URL"
+                  />
+                </DetailRow>
+
+                {keys.length === 0 ? (
+                  <DetailRow label="API key">
+                    <p className="text-sm text-text-muted">
+                      No default public key — an admin can set one on the Endpoint page.
+                    </p>
+                  </DetailRow>
+                ) : (
+                  keys.map((k) => (
+                    <DetailRow
+                      key={k.id}
+                      label="API key"
+                      sublabel={k.name}
+                      action={
+                        <CopyButton
+                          onClick={() => copy(k.key, k.id)}
+                          copied={copied === k.id}
+                          label={`Copy key ${k.name}`}
+                        />
+                      }
+                    >
+                      <CopyableValue
+                        value={k.key}
+                        onCopy={() => copy(k.key, k.id)}
+                        label={`Copy key ${k.name}`}
+                      />
+                    </DetailRow>
+                  ))
+                )}
+
+                {keys.length > 0 && (
+                  <DetailRow
+                    top
+                    label={
+                      <span className="flex items-center gap-2">
+                        Models
+                        <Badge variant="default" size="sm">{combos.length}</Badge>
+                      </span>
+                    }
+                  >
+                    {combos.length === 0 ? (
+                      <p className="text-xs text-text-muted">No models available for this key</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {combos.map((c) => (
+                          <button
+                            key={c.name}
+                            type="button"
+                            onClick={() => copy(c.name, `combo-${c.name}`)}
+                            title={`Copy ${c.name}`}
+                            aria-label={`Copy model ${c.name}`}
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-xs transition-colors",
+                              copied === `combo-${c.name}`
+                                ? "border-brand-500/40 bg-brand-500/15 text-brand-600 dark:text-brand-300"
+                                : "border-border-subtle bg-surface-2 text-text-muted hover:border-brand-500/30 hover:bg-brand-500/10 hover:text-brand-600 dark:hover:text-brand-300"
+                            )}
+                          >
+                            {copied === `combo-${c.name}` && (
+                              <span className="material-symbols-outlined text-[14px]">check</span>
+                            )}
+                            {c.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </DetailRow>
                 )}
               </div>
+            </Card>
 
-              <div
-                className="h-2.5 w-full rounded-full bg-black/5 dark:bg-white/10 overflow-hidden"
-                role="progressbar"
-                aria-valuenow={Math.round(usageLimit.pct)}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-label={`Usage ${usageLimit.text}`}
+            {/* Usage limit — below the connection details panel */}
+            {usageLimit && (
+              <Card
+                icon="speed"
+                title="Usage limit"
+                subtitle="Lifetime quota for the default public key"
+                action={
+                  <span
+                    className={cn(
+                      "font-mono text-sm font-semibold",
+                      usageLimit.over ? "text-red-500" : "text-text-main"
+                    )}
+                  >
+                    {Math.round(usageLimit.pct)}%
+                  </span>
+                }
               >
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p
+                    className={cn(
+                      "font-mono text-sm font-medium",
+                      usageLimit.over ? "text-red-500" : "text-text-main"
+                    )}
+                  >
+                    {usageLimit.text}
+                  </p>
+                  {usageLimit.over && (
+                    <Badge variant="error" size="sm" dot>
+                      Limit reached
+                    </Badge>
+                  )}
+                </div>
                 <div
-                  className={`h-full rounded-full transition-[width] duration-300 ${barColor(
-                    usageLimit.pct,
-                    usageLimit.over
-                  )}`}
-                  style={{ width: `${usageLimit.pct}%` }}
-                />
-              </div>
-
-              <div className="flex justify-between text-[10px] text-text-muted font-mono">
-                <span>0%</span>
-                <span>100%</span>
-              </div>
-            </div>
-          </Card>
+                  className="h-2.5 w-full overflow-hidden rounded-full bg-surface-2"
+                  role="progressbar"
+                  aria-valuenow={Math.round(usageLimit.pct)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label={`Usage ${usageLimit.text}`}
+                >
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-[width] duration-300",
+                      barColor(usageLimit.pct, usageLimit.over)
+                    )}
+                    style={{ width: `${usageLimit.pct}%` }}
+                  />
+                </div>
+              </Card>
+            )}
+          </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }
