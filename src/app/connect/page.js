@@ -94,8 +94,8 @@ function CopyableValue({ value, onCopy, label }) {
 
 function ConnectSkeleton() {
   return (
-    <div className="flex flex-col gap-4" aria-hidden="true">
-      <Card padding="md">
+    <div className="flex flex-col gap-5" aria-hidden="true">
+      <Card padding="md" className="overflow-hidden border-brand-500/20 bg-bg/80 backdrop-blur-xl shadow-2xl ring-1 ring-white/10">
         <div className="mb-4 flex items-center gap-3">
           <Skeleton className="size-9 rounded-[10px]" />
           <div className="flex-1">
@@ -124,7 +124,7 @@ function ConnectSkeleton() {
           </div>
         </div>
       </Card>
-      <Card padding="md">
+      <Card padding="md" className="overflow-hidden border-primary/20 bg-bg/80 backdrop-blur-xl shadow-2xl ring-1 ring-white/10">
         <div className="mb-4 flex items-center gap-3">
           <Skeleton className="size-9 rounded-[10px]" />
           <Skeleton className="h-4 w-28" />
@@ -180,29 +180,33 @@ export default function ConnectPage() {
   const initialLoading = loading && keys.length === 0;
 
   return (
-    <div className="dot-grid-bg relative min-h-screen">
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-bg via-bg-secondary to-bg">
       <ThemeToggle variant="card" className="absolute right-4 top-4 z-20" />
+      
+      {/* Animated background gradient */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-1/2 -left-1/2 h-[200%] w-[200%] animate-gradient-xy opacity-30 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-brand-500/20 via-transparent to-transparent"></div>
+        <div className="absolute -bottom-1/2 -right-1/2 h-[200%] w-[200%] animate-gradient-xy-reverse opacity-30 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary/20 via-transparent to-transparent"></div>
+      </div>
 
       <main className="relative z-10 mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
-        <header className="mb-8 text-center sm:mb-10">
-          <div className="mx-auto mb-4 inline-flex size-12 items-center justify-center rounded-[14px] bg-brand-500/10 text-brand-500">
+        <header className="mb-10 text-center">
+          <div className="mx-auto mb-4 inline-flex size-12 items-center justify-center rounded-[14px] bg-brand-500/10 text-brand-500 shadow-lg ring-1 ring-brand-500/20">
             <span className="material-symbols-outlined text-[26px]">cable</span>
           </div>
-          <h1 className="text-2xl font-bold text-text-main sm:text-3xl">Connect to {APP_NAME}</h1>
-          <p className="mt-2 text-sm text-text-muted">
-            OpenAI & Anthropic-compatible base URL and public API keys
-          </p>
+          <h1 className="bg-gradient-to-r from-text-main via-brand-500 to-primary bg-clip-text text-2xl font-bold text-transparent sm:text-3xl">
+            Connect to {APP_NAME}
+          </h1>
         </header>
 
         {initialLoading ? (
           <ConnectSkeleton />
         ) : (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-5">
             {/* Connection details panel */}
             <Card
               icon="settings_ethernet"
               title="Connection details"
-              subtitle="Shared public access — prefer private keys for personal use."
               action={
                 <button
                   type="button"
@@ -216,6 +220,7 @@ export default function ConnectPage() {
                   </span>
                 </button>
               }
+              className="overflow-hidden border-brand-500/20 bg-bg/80 backdrop-blur-xl shadow-2xl ring-1 ring-white/10"
             >
               {error && (
                 <p className="mb-3 flex items-center gap-1.5 rounded-[10px] bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
@@ -317,7 +322,6 @@ export default function ConnectPage() {
               <Card
                 icon="speed"
                 title="Usage limit"
-                subtitle="Lifetime quota for the default public key"
                 action={
                   <span
                     className={cn(
@@ -328,6 +332,7 @@ export default function ConnectPage() {
                     {Math.round(usageLimit.pct)}%
                   </span>
                 }
+                className="overflow-hidden border-primary/20 bg-bg/80 backdrop-blur-xl shadow-2xl ring-1 ring-white/10"
               >
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <p

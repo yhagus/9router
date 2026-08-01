@@ -9,6 +9,7 @@ import CooldownTimer from "./CooldownTimer";
 export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
   const proxyDropdownRef = useRef(null);
 
   const proxyPoolMap = new Map((proxyPools || []).map((pool) => [pool.id, pool]));
@@ -66,6 +67,26 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
     } finally {
       setUpdatingProxy(false);
       setShowProxyDropdown(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    try {
+      const response = await fetch(`/api/providers/${connection.id}/test`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      
+      if (!data.valid) {
+        // Show error feedback - could be toast or brief visual indicator
+        console.log("Test failed:", data.error, data.diagnosis);
+      }
+      // Success is implicit - user sees the status update after a moment
+    } catch (error) {
+      console.error("Test connection error:", error);
+    } finally {
+      setTestingConnection(false);
     }
   };
 
@@ -257,6 +278,16 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
               </button>
             </Tooltip>
           )}
+          <button 
+            onClick={handleTestConnection} 
+            disabled={testingConnection || connection.isActive === false}
+            className={`flex flex-col items-center rounded px-2 py-1 text-text-muted hover:bg-black/5 hover:text-primary dark:hover:bg-white/5 ${testingConnection ? "animate-pulse" : ""} ${connection.isActive === false ? "cursor-not-allowed opacity-50" : ""}`}
+          >
+            <span className="material-symbols-outlined text-[18px]">
+              {testingConnection ? "progress_activity" : "test"}
+            </span>
+            <span className="text-[10px] leading-tight">{testingConnection ? "Testing..." : "Test"}</span>
+          </button>
           <button onClick={onEdit} className="flex flex-col items-center rounded px-2 py-1 text-text-muted hover:bg-black/5 hover:text-primary dark:hover:bg-white/5">
             <span className="material-symbols-outlined text-[18px]">edit</span>
             <span className="text-[10px] leading-tight">Edit</span>

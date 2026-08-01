@@ -24,6 +24,7 @@ import { qoderEncodeBody } from "../shared/qoder/encoding.js";
 import { buildCosyHeaders } from "../shared/qoder/cosy.js";
 import { v4 as uuidv4 } from "uuid";
 import { createHash } from "crypto";
+import { cwd as processCwd } from "process";
 
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
@@ -41,6 +42,41 @@ import {
   QODER_CLIENT_TYPE,
 } from "../shared/qoder/constants.js";
 import { getQoderModelConfig, resolveQoderModels } from "../services/qoderModels.js";
+
+/**
+ * Extract working directory from request body, matching the pattern used by
+ * other providers like devin-cli. Checks multiple field names and falls back
+ * to server's current directory if none provided.
+ */
+function extractWorkingDirectory(body) {
+  const candidates = [];
+  const push = (v) => {
+    if (typeof v === "string" && v.trim()) candidates.push(v.trim());
+  };
+
+  // Check various field names for working directory
+  push(body?.cwd);
+  push(body?.working_directory);
+  push(body?.workdir);
+  push(body?.workspace);
+  push(body?.metadata?.cwd);
+  push(body?.metadata?.working_directory);
+
+  // Validate first candidate that is absolute and exists
+  for (const c of candidates) {
+    try {
+      // Only use if it's an absolute path
+      if (c.startsWith("/") || c.startsWith("\\") || /^[A-Z]:\\/i.test(c)) {
+        return c;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Fallback to server's current directory (where 9Router is running)
+  return typeof processCwd === "function" ? processCwd() : ".";
+}
 
 /**
  * Hoist role:"system" messages out of the messages array (Qoder rejects
@@ -347,6 +383,9 @@ async function buildQoderRequestBody({ model, body, credentials, log, proxyOptio
   const psd = credentials.providerSpecificData || {};
   const sessionId = stableHash("qoder-session", psd.userId, qoderKey);
   const recordId = stableChatRecordId(qoderKey, messages, tools, maxTokens);
+  
+  // Extract working directory from request body, matching pattern used by devin-cli
+  const cwd = extractWorkingDirectory(body);
 
   return {
     qoderKey,
@@ -376,7 +415,9 @@ async function buildQoderRequestBody({ model, body, credentials, log, proxyOptio
         chatPrompt: "",
         imageUrls: null,
         extra: {
-          context: [],
+          context: [
+            { type: "workspace", path: cwd }  // Inject working directory context
+          ],
           modelConfig: { key: qoderKey, is_reasoning: isReasoning },
           originalContent: lastUser,
         },

@@ -13,7 +13,7 @@ export default {
     },
   },
   category: "oauth",
-  authModes: ["oauth", "apikey"],
+  authModes: ["oauth"],
   hasOAuth: true,
   authHint: "Personal Access Token (pt-...) từ https://qoder.com/account/integrations",
   transport: {
